@@ -55,6 +55,8 @@ echo.
 REM Build application
 echo [6] Building application...
 pyinstaller --windowed --onefile --clean --name Qflow ^
+    --icon=icon.ico ^
+    --add-data "icon.ico;." ^
     --hidden-import pynput.keyboard._win32 ^
     --hidden-import pynput.mouse._win32 ^
     --hidden-import comtypes ^

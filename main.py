@@ -1680,6 +1680,16 @@ class SettingsDialog(tk.Toplevel):
 class App(tk.Tk):
     def __init__(self):
         super().__init__(); self.title("Qflow 1.6 —— QwejayHuang"); self.geometry("1400x1100")
+        # 设置应用程序图标
+        try:
+            # PyInstaller创建临时文件夹并把路径存储在 _MEIPASS 中
+            if hasattr(sys, '_MEIPASS'):
+                icon_path = os.path.join(sys._MEIPASS, 'icon.ico')
+            else:
+                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon.ico')
+            self.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"无法设置图标: {e}")
         self.core = AutomationCore(self.log, self); self.log_q = queue.Queue()
         self.drag_node_type, self.drag_ghost = None, None
         self.hotkey_listener = None
