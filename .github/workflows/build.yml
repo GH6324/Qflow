@@ -35,20 +35,7 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      # 4. 使用 PyInstaller 打包应用
-      - name: Build with PyInstaller
-        run: |
-          pyinstaller --onefile --windowed main.py
-
-      # 5. 上传构建产物作为 Artifact
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Qflow-executable
-          path: dist/main.exe
-          retention-days: 5
-
-      # 6. 获取最新 Release 版本号（如果没有则从 1.5.0 开始）
+      # 4. 获取最新 Release 版本号（如果没有则从 1.6.0 开始）
       - name: Get latest release version
         id: get_version
         uses: actions/github-script@v7
@@ -61,12 +48,12 @@ jobs:
             });
             let version;
             if (response.data.length === 0) {
-              version = '1.5.0'; // 如果没有 Release，从 1.5.0 开始
+              version = '1.6.0'; // 如果没有 Release，从 1.6.0 开始
             } else {
               const latestTag = response.data[0].tag_name;
               const versionMatch = latestTag.match(/^v?(\d+)\.(\d+)\.(\d+)$/);
               if (!versionMatch) {
-                version = '1.5.0'; // 如果 tag_name 不符合规范，从 1.5.0 开始
+                version = '1.6.0'; // 如果 tag_name 不符合规范，从 1.6.0 开始
               } else {
                 // 递增版本号（默认递增补丁版本）
                 const major = parseInt(versionMatch[1], 10);
@@ -78,6 +65,21 @@ jobs:
             // 使用环境文件设置输出
             const fs = require('fs');
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+
+      # 5. 使用 PyInstaller 打包应用
+      - name: Build with PyInstaller
+        run: |
+          $version = "${{ steps.get_version.outputs.version }}"
+          pyinstaller --onefile --windowed --name "Qflow_$version" main.py
+        shell: pwsh
+
+      # 6. 上传构建产物作为 Artifact
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Qflow-executable
+          path: dist/Qflow_*.exe
+          retention-days: 5
 
       # 7. 生成变更日志
       - name: Generate changelog
@@ -111,6 +113,6 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            dist/main.exe
+            dist/Qflow_*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
