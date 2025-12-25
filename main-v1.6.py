@@ -17,18 +17,9 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 from PIL import Image, ImageTk, ImageGrab, ImageChops
 import pyautogui
 from pynput import keyboard
-from pynput.keyboard import Controller as KeyboardController
 import copy
 from datetime import datetime
 from collections import namedtuple
-
-# 尝试导入 pyperclip 用于剪贴板粘贴模式
-try:
-    import pyperclip
-    HAS_PYPERCLIP = True
-except ImportError:
-    HAS_PYPERCLIP = False
-    print("⚠️ 提示: 未安装 pyperclip，键盘'粘贴模式'将不可用。")
 
 # --- 1. 依赖库检查 ---
 try:
@@ -49,31 +40,15 @@ except ImportError:
 
 # --- 2. 系统与配置管理 ---
 pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0.05  # 增加全局操作间隔，提升稳定性
 
 # Windows API 常量
 user32 = ctypes.windll.user32
 shcore = ctypes.windll.shcore
 
-def get_virtual_screen_geometry():
-    """获取所有屏幕组成的虚拟桌面坐标范围 (修复多屏截图问题)"""
-    try:
-        return (
-            user32.GetSystemMetrics(76), # SM_XVIRTUALSCREEN
-            user32.GetSystemMetrics(77), # SM_YVIRTUALSCREEN
-            user32.GetSystemMetrics(78), # SM_CXVIRTUALSCREEN
-            user32.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
-        )
-    except:
-        return 0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-
-# 获取虚拟屏幕参数
-VX, VY, VW, VH = get_virtual_screen_geometry()
-
 def get_scale_factor():
     try:
         if sys.platform.startswith('win'):
-            try: shcore.SetProcessDpiAwareness(1) # 使用系统级感知，避免坐标错乱
+            try: shcore.SetProcessDpiAwareness(2) 
             except: user32.SetProcessDPIAware()
         log_w, log_h = pyautogui.size()
         phy_w, phy_h = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
@@ -150,7 +125,6 @@ NODE_CONFIG = {
     'wait':     {'title': '⏳ 延时', 'outputs': ['out'], 'color': '#4527a0'},
     'mouse':    {'title': '👆 鼠标', 'outputs': ['out'], 'color': '#1565c0'},
     'keyboard': {'title': '⌨️ 键盘', 'outputs': ['out'], 'color': '#1565c0'},
-    'notify':   {'title': '🔔 提示', 'outputs': ['out'], 'color': '#fdd835'},
     'cmd':      {'title': '💻 命令', 'outputs': ['out'], 'color': '#1565c0'},
     'web':      {'title': '🔗 网页', 'outputs': ['out'], 'color': '#0277bd'},
     'image':    {'title': '🎯 找图', 'outputs': ['found', 'timeout'], 'color': '#ef6c00'},
@@ -164,107 +138,94 @@ NODE_CONFIG = {
 }
 
 PORT_TRANSLATION = {'out': '继续', 'yes': '是', 'no': '否', 'found': '找到', 'timeout': '超时', 'loop': '循环', 'exit': '退出', 'else': '否则', 'success': '成功', 'fail': '失败'}
-MOUSE_ACTIONS = {'click': '点击', 'move': '移动', 'drag': '拖拽', 'scroll': '滚动', 'double_click': '双击'}
+MOUSE_ACTIONS = {'click': '点击', 'move': '移动', 'drag': '拖拽', 'scroll': '滚动'}
 MOUSE_BUTTONS = {'left': '左键', 'right': '右键', 'middle': '中键'}
 ACTION_MAP = {'click': '单击左键', 'double_click': '双击左键', 'right_click': '单击右键', 'none': '不执行操作'}
 MATCH_STRATEGY_MAP = {'hybrid': '智能混合', 'template': '模板匹配', 'feature': '特征匹配'}
+VAR_OP_MAP = {'=': '等于', '!=': '不等于', 'exists': '已定义', 'not_exists': '未定义'}
 
 # --- 3. 基础工具类 ---
-
-class KeyboardEngine:
-    _controller = KeyboardController()
-    
-    @staticmethod
-    def safe_write(text, mode='direct'):
-        """mode: direct(按键模拟), paste(剪贴板粘贴)"""
-        if mode == 'paste' and HAS_PYPERCLIP:
-            try:
-                old_clip = pyperclip.paste()
-                pyperclip.copy(text)
-                time.sleep(0.05)
-                with KeyboardEngine._controller.pressed(keyboard.Key.ctrl):
-                    KeyboardEngine._controller.press('v')
-                    KeyboardEngine._controller.release('v')
-                time.sleep(0.1)
-                pyperclip.copy(old_clip)
-            except Exception as e:
-                print(f"粘贴模式失败，回退到普通输入: {e}")
-                pyautogui.write(text)
-        else:
-            for char in text:
-                try:
-                    KeyboardEngine._controller.type(char)
-                except:
-                    pyautogui.write(char) # 回退
-                time.sleep(0.005)
-
-class VisualTips:
-    """视觉提示小窗"""
-    @staticmethod
-    def show_toast(message, duration=2000, use_sound=False):
-        try:
-            top = tk.Toplevel()
-            top.overrideredirect(True)
-            top.attributes("-topmost", True, "-alpha", 0.9)
-            top.configure(bg="#333333")
-            
-            lbl = tk.Label(top, text=message, fg="white", bg="#333333", padx=20, pady=10, font=("Microsoft YaHei", 12, "bold"))
-            lbl.pack()
-            
-            sw, sh = top.winfo_screenwidth(), top.winfo_screenheight()
-            top.geometry(f"+{sw//2 - 100}+{sh//2 - 50}")
-            
-            if use_sound:
-                threading.Thread(target=lambda: ctypes.windll.kernel32.Beep(800, 300), daemon=True).start()
-            
-            top.after(duration, top.destroy)
-        except: pass
-
+# --- 5. 工业级穿透版 WindowEngine (重构版：使用 Snapshot API 和 DWM) ---
 class WindowEngine:
+    # 定义必要的 Windows API 结构和常量
     TH32CS_SNAPPROCESS = 0x00000002
     class PROCESSENTRY32(ctypes.Structure):
-        _fields_ = [("dwSize", ctypes.c_ulong), ("cntUsage", ctypes.c_ulong), ("th32ProcessID", ctypes.c_ulong), ("th32DefaultHeapID", ctypes.c_ulong), ("th32ModuleID", ctypes.c_ulong), ("cntThreads", ctypes.c_ulong), ("th32ParentProcessID", ctypes.c_ulong), ("pcPriClassBase", ctypes.c_long), ("dwFlags", ctypes.c_ulong), ("szExeFile", ctypes.c_char * 260)]
+        _fields_ = [
+            ("dwSize", ctypes.c_ulong),
+            ("cntUsage", ctypes.c_ulong),
+            ("th32ProcessID", ctypes.c_ulong),
+            ("th32DefaultHeapID", ctypes.c_ulong),
+            ("th32ModuleID", ctypes.c_ulong),
+            ("cntThreads", ctypes.c_ulong),
+            ("th32ParentProcessID", ctypes.c_ulong),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", ctypes.c_ulong),
+            ("szExeFile", ctypes.c_char * 260) 
+        ]
 
     @staticmethod
     def _get_process_map():
+        """获取 {PID: ExeName} 的全局映射，无需 OpenProcess 权限"""
         pid_map = {}
         hSnap = ctypes.windll.kernel32.CreateToolhelp32Snapshot(WindowEngine.TH32CS_SNAPPROCESS, 0)
         if hSnap == -1: return pid_map
+        
         pe32 = WindowEngine.PROCESSENTRY32()
         pe32.dwSize = ctypes.sizeof(WindowEngine.PROCESSENTRY32)
+        
         if ctypes.windll.kernel32.Process32First(hSnap, ctypes.byref(pe32)):
             while True:
-                try: exe_name = pe32.szExeFile.decode('gbk', 'ignore')
-                except: exe_name = pe32.szExeFile.decode('utf-8', 'ignore')
+                try:
+                    exe_name = pe32.szExeFile.decode('gbk', 'ignore') # 兼容中文系统
+                except:
+                    exe_name = pe32.szExeFile.decode('utf-8', 'ignore')
                 pid_map[pe32.th32ProcessID] = exe_name
-                if not ctypes.windll.kernel32.Process32Next(hSnap, ctypes.byref(pe32)): break
+                if not ctypes.windll.kernel32.Process32Next(hSnap, ctypes.byref(pe32)):
+                    break
         ctypes.windll.kernel32.CloseHandle(hSnap)
         return pid_map
 
     @staticmethod
     def get_window_info(hwnd, pid_map=None):
+        """获取窗口详细信息，支持传入缓存的 PID Map"""
         if not hwnd: return None
+        
+        # 1. 标题
         length = user32.GetWindowTextLengthW(hwnd)
         title = ""
         if length > 0:
             buff = ctypes.create_unicode_buffer(length + 1)
             user32.GetWindowTextW(hwnd, buff, length + 1)
             title = buff.value
+            
+        # 2. 类名
         cls_buff = ctypes.create_unicode_buffer(256)
         user32.GetClassNameW(hwnd, cls_buff, 256)
         class_name = cls_buff.value
+        
+        # 3. 进程名 (通过 Map 查找，避免 Access Denied)
         pid = ctypes.c_ulong()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        exe_name = pid_map.get(pid.value, "") if pid_map else ""
+        
+        if pid_map:
+            exe_name = pid_map.get(pid.value, "")
+        else:
+            # 回退逻辑（很少用到）
+            exe_name = ""
+            
         return {'hwnd': hwnd, 'title': title, 'class_name': class_name, 'exe_name': exe_name, 'pid': pid.value}
 
     @staticmethod
     def get_window_rect(hwnd):
+        """获取 DWM 修正后的视觉矩形"""
         try:
             rect = ctypes.wintypes.RECT()
+            # DWMWA_EXTENDED_FRAME_BOUNDS = 9
             if ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect)) == 0:
                 return Box(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
         except: pass
+        
+        # 回退到标准 API
         rect = ctypes.wintypes.RECT()
         if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
             return Box(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
@@ -272,49 +233,82 @@ class WindowEngine:
 
     @staticmethod
     def is_window_valid_target(hwnd, my_pid):
+        """强化的有效性检查"""
         if not user32.IsWindowVisible(hwnd): return False
+        
+        # 排除最小化窗口 (可选，视需求而定，这里排除以防止误选)
         if user32.IsIconic(hwnd): return False
+
+        # 检查是否为拥有者窗口（过滤掉弹出菜单、提示框等子窗口）
+        # GW_OWNER = 4
         if user32.GetWindow(hwnd, 4) != 0: return False
+
+        # 过滤 Cloaked 窗口 (Win8+)
         is_cloaked = ctypes.c_int(0)
         ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(is_cloaked), ctypes.sizeof(is_cloaked))
         if is_cloaked.value != 0: return False
+
+        # 过滤自身
         pid = ctypes.c_ulong()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         if pid.value == my_pid: return False
+
+        # 过滤常见系统干扰类
         cls_buff = ctypes.create_unicode_buffer(256)
         user32.GetClassNameW(hwnd, cls_buff, 256)
         cls_name = cls_buff.value
-        if cls_name in ['Progman', 'Shell_TrayWnd', 'Button', 'Static', 'WorkerW', 'Windows.UI.Core.CoreWindow', 'EdgeUiInputTopWnd', 'ApplicationFrameWindow']: return False
+        
+        blacklist = [
+            'Progman', 'Shell_TrayWnd', 'Button', 'Static', 'WorkerW', 
+            'Windows.UI.Core.CoreWindow', 'EdgeUiInputTopWnd', 'ApplicationFrameWindow'
+        ]
+        if cls_name in blacklist: return False
+        
+        # 尺寸检查
         rect = ctypes.wintypes.RECT()
         user32.GetWindowRect(hwnd, ctypes.byref(rect))
         w, h = rect.right - rect.left, rect.bottom - rect.top
-        if w < 10 or h < 10: return False 
+        if w < 10 or h < 10: return False # 太小的窗口忽略
+        
+        # 如果是 ApplicationFrameWindow (UWP 容器)，通常没有标题的都是幽灵窗口
         length = user32.GetWindowTextLengthW(hwnd)
         if length == 0 and cls_name == 'ApplicationFrameWindow': return False
+
         return True
 
     @staticmethod
     def get_all_windows():
+        """一次性获取所有有效窗口列表（性能优化）"""
         results = []
-        pid_map = WindowEngine._get_process_map()
+        pid_map = WindowEngine._get_process_map() # 获取一次快照
         my_pid = os.getpid()
+
         def callback(hwnd, extra):
             if WindowEngine.is_window_valid_target(hwnd, my_pid):
                 info = WindowEngine.get_window_info(hwnd, pid_map)
                 if info:
                     info['rect'] = WindowEngine.get_window_rect(hwnd)
-                    if info['rect']: results.append(info)
+                    if info['rect']: # 确保有坐标
+                        results.append(info)
             return True
+
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
         user32.EnumWindows(WNDENUMPROC(callback), 0)
+        
+        # 按 Z-Order 排序（系统默认 EnumWindows 顺序就是 Z-Order，前面的在上面）
         return results
 
     @staticmethod
     def get_top_window_at_mouse():
+        """重构：先获取所有窗口快照，再进行几何匹配，避免回调卡顿"""
         class POINT(ctypes.Structure): _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
         pt = POINT()
         user32.GetCursorPos(ctypes.byref(pt))
+        
+        # 获取列表
         windows = WindowEngine.get_all_windows()
+        
+        # 遍历查找第一个包含鼠标的窗口 (Z-order 顺序)
         for win in windows:
             r = win['rect']
             if r.left <= pt.x < (r.left + r.width) and r.top <= pt.y < (r.top + r.height):
@@ -323,21 +317,36 @@ class WindowEngine:
 
     @staticmethod
     def smart_find_window(target_exe=None, target_class=None, target_title=None):
+        """智能查找逻辑：支持部分匹配"""
         pid_map = WindowEngine._get_process_map()
         found_hwnd = 0
         my_pid = os.getpid()
+
         def callback(hwnd, extra):
             nonlocal found_hwnd
             if not WindowEngine.is_window_valid_target(hwnd, my_pid): return True
+            
             info = WindowEngine.get_window_info(hwnd, pid_map)
+            
             match = True
-            if target_exe and target_exe.lower() != info['exe_name'].lower(): match = False
-            if match and target_class and target_class.lower() != info['class_name'].lower(): match = False
-            if match and target_title and target_title.lower() not in info['title'].lower(): match = False
+            # EXE 匹配 (不区分大小写)
+            if target_exe and target_exe.lower() != info['exe_name'].lower(): 
+                match = False
+            
+            # 类名匹配 (不区分大小写)
+            if match and target_class and target_class.lower() != info['class_name'].lower(): 
+                match = False
+                
+            # 标题匹配 (包含关系)
+            if match and target_title:
+                if target_title.lower() not in info['title'].lower(): 
+                    match = False
+            
             if match:
                 found_hwnd = hwnd
-                return False 
+                return False # Stop enum
             return True
+            
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
         user32.EnumWindows(WNDENUMPROC(callback), 0)
         return found_hwnd
@@ -345,9 +354,14 @@ class WindowEngine:
     @staticmethod
     def focus_window(hwnd):
         try:
-            if user32.IsIconic(hwnd): user32.ShowWindow(hwnd, 9) 
+            # 处理最小化
+            if user32.IsIconic(hwnd): 
+                user32.ShowWindow(hwnd, 9) # SW_RESTORE
+            
+            # 强制置顶 (使用 AttachThreadInput 技巧解决前台锁定问题)
             current_thread = ctypes.windll.kernel32.GetCurrentThreadId()
             target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+            
             user32.AttachThreadInput(current_thread, target_thread, True)
             user32.SetForegroundWindow(hwnd)
             user32.AttachThreadInput(current_thread, target_thread, False)
@@ -395,7 +409,7 @@ class AudioEngine:
 class VisionEngine:
     @staticmethod
     def capture_screen(bbox=None):
-        try: return ImageGrab.grab(bbox=bbox, all_screens=True)
+        try: return ImageGrab.grab(bbox=bbox)
         except OSError: return None
 
     @staticmethod
@@ -405,10 +419,12 @@ class VisionEngine:
             if stop_event and stop_event.is_set(): return None
             capture_bbox = (region[0], region[1], region[0] + region[2], region[1] + region[3]) if region else None
             haystack = VisionEngine.capture_screen(bbox=capture_bbox)
+            
             if haystack is None:
-                time.sleep(0.5) 
+                time.sleep(0.5); 
                 if timeout > 0 and time.time()-start_time>=timeout: break
                 continue
+            
             try:
                 result, _ = VisionEngine._advanced_match(needle, haystack, confidence, stop_event, grayscale, multiscale, scaling_ratio, strategy)
                 if result:
@@ -416,6 +432,7 @@ class VisionEngine:
                     offset_y = region[1] if region else 0
                     return Box(result.left + offset_x, result.top + offset_y, result.width, result.height)
             except Exception: pass
+            
             if timeout > 0 and time.time()-start_time>=timeout: break
             time.sleep(0.1)
         return None
@@ -511,7 +528,6 @@ class AutomationCore:
         self.active_threads = 0; self.thread_lock = threading.Lock(); self.scaling_ratio = 1.0; self.breakpoints = set()
         self.max_threads = 50 
         self.context = {'window_rect': None, 'window_handle': 0, 'window_offset': (0, 0)}
-        self.performance_stats = {'nodes_executed': 0, 'errors': 0, 'start_time': None}
 
     def load_project(self, project_data):
         self.project = project_data; self.scaling_ratio = 1.0; self.breakpoints = set(project_data.get('breakpoints', []))
@@ -536,7 +552,6 @@ class AutomationCore:
         self.running = True; self.paused = False; self.stop_event.clear(); self.pause_event.set()
         self.runtime_memory = {}; self.active_threads = 0
         self.context = {'window_rect': None, 'window_handle': 0, 'window_offset': (0, 0)}
-        self.performance_stats = {'nodes_executed': 0, 'errors': 0, 'start_time': time.time()}
         self.log("🚀 引擎启动", "exec"); self.app.iconify()
         threading.Thread(target=self._run_flow_engine, args=(start_node_id,), daemon=True).start()
 
@@ -578,11 +593,7 @@ class AutomationCore:
                 time.sleep(0.5)
         except Exception as e: traceback.print_exc(); self.log(f"引擎异常: {str(e)}", "error")
         finally:
-            self.running = False
-            if self.performance_stats['start_time']:
-                elapsed = time.time() - self.performance_stats['start_time']
-                self.log(f"📊 执行统计: {self.performance_stats['nodes_executed']}个节点, {self.performance_stats['errors']}个错误, 耗时{elapsed:.2f}秒", "info")
-            self.log("🏁 流程结束", "info"); 
+            self.running = False; self.log("🏁 流程结束", "info"); 
             self.app.highlight_node_safe(None); 
             self.app.after(0, self.app.deiconify); 
             self.app.after(100, self.app.reset_ui_state)
@@ -601,14 +612,8 @@ class AutomationCore:
             self._check_pause(node_id)
             if self.stop_event.is_set(): return
             self.app.highlight_node_safe(node_id, 'running'); self.app.select_node_safe(node_id)
-            try: 
-                out_port = self._execute_node(node)
-                self.performance_stats['nodes_executed'] += 1
-            except Exception as e: 
-                self.log(f"💥 节点[{node_id}]错误: {e}", "error"); 
-                traceback.print_exc(); 
-                self.performance_stats['errors'] += 1
-                out_port = 'fail'
+            try: out_port = self._execute_node(node)
+            except Exception as e: self.log(f"💥 节点[{node_id}]错误: {e}", "error"); traceback.print_exc(); out_port = 'fail'
             if out_port == '__STOP__' or self.stop_event.is_set(): return
             
             if node['type'] != 'reroute':
@@ -631,18 +636,11 @@ class AutomationCore:
     
     def _update_context_rect(self):
         if self.context['window_handle']:
-            try:
-                if not user32.IsWindow(self.context['window_handle']):
-                    self.log("⚠️ 绑定窗口已关闭，重置窗口上下文", "warning")
-                    self.context = {'window_rect': None, 'window_handle': 0, 'window_offset': (0, 0)}
-                    return
-                rect = WindowEngine.get_window_rect(self.context['window_handle'])
-                if rect:
-                    self.context['window_rect'] = rect
-                    self.context['window_offset'] = (rect.left, rect.top)
-                else:
-                    self.context = {'window_rect': None, 'window_handle': 0, 'window_offset': (0, 0)}
-            except Exception as e:
+            rect = WindowEngine.get_window_rect(self.context['window_handle'])
+            if rect:
+                self.context['window_rect'] = rect
+                self.context['window_offset'] = (rect.left, rect.top)
+            else:
                 self.context = {'window_rect': None, 'window_handle': 0, 'window_offset': (0, 0)}
 
     def _execute_node(self, node):
@@ -650,10 +648,7 @@ class AutomationCore:
         ntype = node['type']
         data = {k: (self._replace_variables(v) if isinstance(v, str) and '${' in v else v) for k, v in node.get('data', {}).items()}
         
-        # 窗口上下文维护
-        if self.context['window_handle']: 
-            self._update_context_rect()
-        
+        if self.context['window_handle']: self._update_context_rect()
         win_offset_x, win_offset_y = self.context['window_offset']
         win_region = self.context['window_rect'] 
 
@@ -662,13 +657,6 @@ class AutomationCore:
         if ntype == 'end': self.stop_event.set(); return '__STOP__'
         if ntype == 'wait': return 'out' if self._smart_wait(safe_float(data.get('seconds', 1.0))) else '__STOP__'
         
-        if ntype == 'notify':
-            msg = data.get('msg', '执行到此节点')
-            use_sound = bool(data.get('use_sound', False))
-            duration = safe_int(safe_float(data.get('duration', 2.0)) * 1000)
-            VisualTips.show_toast(msg, duration, use_sound)
-            return 'out'
-
         if ntype == 'open_app':
             path = data.get('path', '')
             args = data.get('args', '')
@@ -689,19 +677,22 @@ class AutomationCore:
             use_exe = bool(data.get('use_exe', True))
             use_class = bool(data.get('use_class', True))
             use_title = bool(data.get('use_title', False))
+            
             target_exe = exe_name if use_exe else None
             target_class = class_name if use_class else None
             target_title = title if use_title else None
-            if not target_exe and not target_class and not target_title: 
-                target_title = title
+            if not target_exe and not target_class and not target_title: target_title = title
+
             hwnd = WindowEngine.smart_find_window(target_exe, target_class, target_title)
+            
             if hwnd:
-                focus_success = WindowEngine.focus_window(hwnd)
+                WindowEngine.focus_window(hwnd)
                 rect = WindowEngine.get_window_rect(hwnd)
                 self.context['window_handle'] = hwnd
                 self.context['window_rect'] = rect
-                self.context['window_offset'] = (rect.left, rect.top) if rect else (0, 0)
-                log_msg = f"⚓ 已绑定: {exe_name or title or '窗口'}"
+                self.context['window_offset'] = (rect.left, rect.top)
+                log_msg = f"⚓ 已绑定: {exe_name or '窗口'}"
+                if rect: log_msg += f" @ {rect}"
                 self.log(log_msg, "success")
                 return 'success'
             else:
@@ -737,47 +728,70 @@ class AutomationCore:
             start_t = time.time()
             threshold = safe_float(data.get('threshold', 0.02))
             timeout = safe_float(data.get('timeout', 10.0))
-            mode = data.get('detect_mode', 'has_sound')
+            mode = data.get('detect_mode', 'has_sound') # has_sound / is_silent
+            
+            self.log(f"🔊 正在检测声音... ({mode}, thr={threshold})", "exec")
+            
             found = False
             while time.time() - start_t < timeout:
                 if self.stop_event.is_set(): return '__STOP__'
                 peak = AudioEngine.get_max_audio_peak()
+                
                 if mode == 'has_sound':
-                    if peak > threshold: found = True; break
-                else: 
-                    if peak < threshold: found = True; break
+                    if peak > threshold:
+                        found = True
+                        break
+                else: # is_silent
+                    if peak < threshold:
+                        found = True
+                        break
                 time.sleep(0.1)
+                
             return 'yes' if found else 'no'
 
         if ntype == 'if_static':
-            roi = data.get('roi') # 存储格式为 (x, y, w, h)
+            # 获取 ROI。注意：如果是窗口模式，需要处理窗口偏移，但 VisionEngine.capture_screen 使用的是屏幕绝对坐标
+            roi = data.get('roi') # (x, y, w, h) absolute screen coords when captured
             if not roi: return 'no'
+            
             duration = safe_float(data.get('duration', 5.0))
             timeout = safe_float(data.get('timeout', 20.0))
             threshold = safe_float(data.get('threshold', 0.98))
-            if self.context['window_handle'] and self.context['window_rect']:
-                abs_x = roi[0] + win_offset_x
-                abs_y = roi[1] + win_offset_y
-            else:
-                abs_x = roi[0]
-                abs_y = roi[1]
-            target_bbox = (abs_x, abs_y, abs_x + roi[2], abs_y + roi[3])
-            start_check = time.time(); static_start = time.time()
+            
+            # 如果绑定了窗口，且 ROI 是基于窗口的（这里假设 ROI 是屏幕截图时的绝对坐标）
+            # 在实际使用中，如果窗口移动了，基于绝对坐标的 ROI 会失效。
+            # 为了支持窗口绑定后的静止检测，理想情况是 ROI 是相对窗口的。
+            # 这里简单起见，使用截取时的绝对坐标，或者如果使用了全窗口截图则使用 win_region
+            
+            target_bbox = roi
+            # 简易处理：如果绑定了窗口，且 ROI 看起来像是在窗口内部（或是全窗口），则尝试偏移
+            # 但最稳妥的静止检测通常是针对特定区域。
+            # 这里直接使用 capture_screen(bbox=target_bbox)
+            
+            start_check = time.time()
+            static_start = time.time()
             last_frame = VisionEngine.capture_screen(bbox=target_bbox)
+            
+            self.log(f"⏸️ 检测静止画面 ({duration}s)...", "exec")
+            
             while time.time() - start_check < timeout:
                 if self.stop_event.is_set(): return '__STOP__'
                 curr_frame = VisionEngine.capture_screen(bbox=target_bbox)
                 is_static = VisionEngine.compare_images(last_frame, curr_frame, threshold)
+                
                 if is_static:
-                    if time.time() - static_start >= duration: return 'yes'
+                    if time.time() - static_start >= duration:
+                        return 'yes'
                 else:
-                    static_start = time.time(); last_frame = curr_frame
+                    static_start = time.time() # reset timer
+                    last_frame = curr_frame
+                
                 time.sleep(0.2)
             return 'no'
 
         if ntype == 'image':
             conf, timeout = safe_float(data.get('confidence', 0.9)), max(0.5, safe_float(data.get('timeout', 10.0)))
-            search_region = win_region if win_region else None
+            search_region = win_region 
             if (anchors := data.get('anchors', [])):
                 primary_res = None
                 for i, anchor in enumerate(anchors):
@@ -800,14 +814,13 @@ class AutomationCore:
                             rx, ry = data.get('relative_click_pos', (0.5, 0.5))
                             tx = res.left + (res.width * rx) + safe_int(data.get('offset_x', 0))
                             ty = res.top + (res.height * ry) + safe_int(data.get('offset_y', 0))
-                            
-                            # 图像识别结果已是屏幕绝对坐标，直接使用
-                            pyautogui.moveTo(tx, ty)
+                            pyautogui.moveTo(tx / SCALE_X, ty / SCALE_Y)
                             getattr(pyautogui, {'click':'click','double_click':'doubleClick','right_click':'rightClick'}.get(act, 'click'))()
                     return 'found'
                 
                 if bool(data.get('auto_scroll', False)):
-                     with self.io_lock: pyautogui.scroll(safe_int(data.get('scroll_amount', -500)))
+                     scroll_amount = safe_int(data.get('scroll_amount', -500))
+                     with self.io_lock: pyautogui.scroll(scroll_amount)
                      if not self._smart_wait(0.8): return '__STOP__'
 
                 if time.time() - start_time > timeout: break
@@ -816,53 +829,25 @@ class AutomationCore:
 
         if ntype == 'mouse':
             with self.io_lock:
-                action = data.get('mouse_action', 'click')
-                dur = safe_float(data.get('duration', 0.5))
-                
-                if action == 'drag':
-                    start_x = safe_int(data.get('start_x', 0)) 
-                    start_y = safe_int(data.get('start_y', 0))
-                    end_x = safe_int(data.get('end_x', 0))
-                    end_y = safe_int(data.get('end_y', 0))
-                    
-                    # 坐标转换：偏移 + 虚拟屏幕修正 (如果需要，但win_offset已经是绝对)
-                    # 假设 win_offset 是基于主屏左上角的绝对坐标
-                    start_x_screen = start_x + win_offset_x
-                    start_y_screen = start_y + win_offset_y
-                    end_x_screen = end_x + win_offset_x
-                    end_y_screen = end_y + win_offset_y
-                    
-                    pyautogui.moveTo(start_x_screen, start_y_screen, duration=0.1)
-                    pyautogui.dragTo(end_x_screen, end_y_screen, button='left', duration=dur)
-                else:
-                    raw_x, raw_y = safe_int(data.get('x',0)), safe_int(data.get('y',0))
-                    target_x = raw_x + win_offset_x
-                    target_y = raw_y + win_offset_y
-                    
-                    if action == 'click': 
-                        pyautogui.click(x=target_x, y=target_y, clicks=safe_int(data.get('click_count', 1)), button=data.get('mouse_button', 'left'), duration=dur, interval=0.1)
-                    elif action == 'double_click':
-                        pyautogui.doubleClick(x=target_x, y=target_y, duration=dur, interval=0.1)
-                    elif action == 'move': 
-                        pyautogui.moveTo(target_x, target_y, duration=dur)
-                    elif action == 'scroll': 
-                        pyautogui.scroll(safe_int(data.get('amount', -500)))
+                action, dur = data.get('mouse_action', 'click'), safe_float(data.get('duration', 0.5))
+                raw_x, raw_y = safe_int(data.get('x',0)), safe_int(data.get('y',0))
+                target_x = (raw_x + win_offset_x) / SCALE_X
+                target_y = (raw_y + win_offset_y) / SCALE_Y
+                if action == 'click': 
+                    pyautogui.click(x=target_x, y=target_y, clicks=safe_int(data.get('click_count', 1)), button=data.get('mouse_button', 'left'), duration=dur)
+                elif action == 'move': pyautogui.moveTo(target_x, target_y, duration=dur)
+                elif action == 'scroll': pyautogui.scroll(safe_int(data.get('amount', -500)))
             return 'out'
         
         if ntype == 'keyboard':
             with self.io_lock:
-                if data.get('kb_mode', 'text') == 'text':
-                    text = data.get('text','')
-                    mode = 'paste' if data.get('use_paste', True) else 'direct'
-                    KeyboardEngine.safe_write(text, mode)
-                    if data.get('press_enter', False): pyautogui.press('enter')
-                else: 
-                    pyautogui.hotkey(*[x.strip() for x in data.get('key_name', 'enter').lower().split('+')])
+                if data.get('kb_mode', 'text') == 'text': pyautogui.write(data.get('text','')); (data.get('press_enter', False) and pyautogui.press('enter'))
+                else: pyautogui.hotkey(*[x.strip() for x in data.get('key_name', 'enter').lower().split('+')])
             return 'out'
-        
         if ntype == 'cmd':
             try: 
-                subprocess.Popen(data.get('command', ''), shell=True)
+                if sys.platform == 'win32': subprocess.Popen(data.get('command', ''), shell=True)
+                else: subprocess.Popen(data.get('command', ''), shell=True, executable='/bin/bash')
             except Exception as e: self.log(f"CMD错误: {e}", "error")
             return 'out'
         if ntype == 'web': webbrowser.open(data.get('url')); self._smart_wait(2); return 'out'
@@ -876,8 +861,7 @@ class AutomationCore:
                     return 'exit'
         if ntype == 'if_img':
             if not (imgs := data.get('images', [])): return 'no'
-            capture_bbox = win_region if win_region else None
-            hay = VisionEngine.capture_screen(bbox=capture_bbox)
+            hay = VisionEngine.capture_screen(bbox=win_region)
             for img in imgs:
                 if not VisionEngine._advanced_match(img.get('image'), hay, safe_float(data.get('confidence',0.9)), self.stop_event, True, True, self.scaling_ratio, 'hybrid')[0]: return 'no'
             return 'yes'
@@ -914,12 +898,14 @@ class HistoryManager:
         self.editor.app.property_panel.clear()
 
 class GraphNode:
+    # Class variable to track next node number
     next_node_number = 1
     
     def __init__(self, canvas, node_id, ntype, x, y, data=None):
         self.canvas, self.id, self.type, self.x, self.y = canvas, node_id, ntype, x, y
         self.data = data if data is not None else {}
         
+        # Assign unique sequential number
         if 'node_number' not in self.data:
             self.data['node_number'] = GraphNode.next_node_number
             GraphNode.next_node_number += 1
@@ -967,7 +953,7 @@ class GraphNode:
                     rows = math.ceil(len(img_list) / 2.0); img_display_h = (rows * 60) + 10 
             else:
                 target_img = self.data.get('image') if self.type == 'image' else self.data.get('roi_preview')
-                if target_img and isinstance(target_img, Image.Image): 
+                if target_img:
                     try:
                         iw, ih = target_img.size; scale = (self.w - 8) / iw; calc_h = int(ih * scale); img_display_h = min(calc_h, 120) + 5
                     except: img_display_h = 80
@@ -985,6 +971,7 @@ class GraphNode:
         self.h = PORT_START_Y + ports_h + widgets_h + toolbar_h + img_display_h + 8
         vh = self.h * z 
         
+        # Create selection rectangle after height calculation
         self.sel_rect = self.canvas.create_rectangle(vx-3*z, vy-3*z, vx+vw+3*z, vy+vh+3*z, outline=COLORS['accent'], width=4*z, tags=self.tags+('selection',), state='hidden')
 
         self.clear_widgets() 
@@ -1036,7 +1023,7 @@ class GraphNode:
                     self.canvas.create_text(ix+3*z, iy+3*z, text=str(idx+1), fill='white', font=('Segoe UI', int(8*z), 'bold'), anchor='nw', tags=self.tags)
             elif img_display_h > 0:
                 target_img = self.data.get('image') if self.type == 'image' else self.data.get('roi_preview')
-                if target_img and isinstance(target_img, Image.Image): 
+                if target_img:
                     disp_w = int(vw - 8*z); disp_h = int((img_display_h - 5) * z); thumb = target_img.copy(); thumb.thumbnail((disp_w, disp_h), Image.Resampling.LANCZOS)
                     tk_thumb = ImageTk.PhotoImage(thumb); self.data['_tk_cache'] = tk_thumb 
                     self.canvas.create_rectangle(vx+4*z, img_start_y, vx+vw-4*z, img_start_y+disp_h, fill='#000000', outline=COLORS['wire'], width=1, tags=self.tags)
@@ -1065,15 +1052,15 @@ class GraphNode:
         y_cursor = vy + (self.widget_offset_y * z) 
         def create_entry(key, default, label_txt, width=8):
             val = self.data.get(key, default); frame = tk.Frame(self.canvas, bg=COLORS['bg_node'])
-            tk.Label(frame, text=label_txt, bg=COLORS['bg_node'], fg=COLORS['fg_sub'], font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(side='left')
-            e = tk.Entry(frame, bg=COLORS['input_bg'], fg='white', bd=0, width=width, insertbackground='white', font=('Microsoft YaHei', int(9 * SCALE_FACTOR))); e.insert(0, str(val)); e.pack(side='left', padx=5)
+            tk.Label(frame, text=label_txt, bg=COLORS['bg_node'], fg=COLORS['fg_sub'], font=FONTS['small']).pack(side='left')
+            e = tk.Entry(frame, bg=COLORS['input_bg'], fg='white', bd=0, width=width, insertbackground='white', font=FONTS['code']); e.insert(0, str(val)); e.pack(side='left', padx=5)
             e.bind("<FocusOut>", lambda ev: self.update_data(key, e.get())); e.bind("<Return>", lambda ev: [self.update_data(key, e.get()), self.canvas.focus_set()])
             self.widgets.append(self.canvas.create_window(vx + 10*z, y_cursor, window=frame, anchor='nw', tags=self.tags))
 
         def create_combo(key, options_map, default, width=8):
             if isinstance(options_map, dict): options = list(options_map.values()); curr_val = self.data.get(key, default); disp_val = options_map.get(curr_val, curr_val); map_inv = {v: k for k, v in options_map.items()}
             else: options = options_map; disp_val = self.data.get(key, default); map_inv = None
-            cb = ttk.Combobox(self.canvas, values=options, state='readonly', width=width, font=('Microsoft YaHei', int(9 * SCALE_FACTOR))); 
+            cb = ttk.Combobox(self.canvas, values=options, state='readonly', width=width, font=FONTS['code']); 
             try: cb.set(disp_val)
             except: pass
             def on_sel(ev): val = cb.get(); final_val = map_inv.get(val, val) if map_inv else val; self.update_data(key, final_val)
@@ -1085,7 +1072,6 @@ class GraphNode:
         elif self.type == 'keyboard': create_entry('text', '', '文本:', width=10)
         elif self.type == 'cmd': create_entry('command', '', '命令:', width=12)
         elif self.type == 'bind_win': create_entry('title', '', '标题:', width=10)
-        elif self.type == 'notify': create_entry('msg', '执行到此节点', '提示:', width=10)
         elif self.type == 'mouse': create_combo('mouse_action', MOUSE_ACTIONS, 'click', width=12)
 
     def clear_widgets(self):
@@ -1097,10 +1083,7 @@ class GraphNode:
         self.canvas.history.save_state()
         self.data[key] = value
         if key in ['cases', 'var_name', 'image', 'images', 'roi_preview', 'path', 'exe_name', 'class_name', 'title']: self.draw() 
-        # 修复：不再盲目重新加载属性面板，防止输入焦点丢失
-        # 仅当当前选中的就是自己时，才考虑是否需要刷新（实际上大多数简单输入不需要刷新）
-        # if self.canvas.app.property_panel.current_node == self: 
-        #    self.canvas.app.property_panel.load_node(self)
+        if self.canvas.app.property_panel.current_node == self: self.canvas.app.property_panel.load_node(self)
 
     def set_sensor_active(self, is_active): self.canvas.itemconfig(self.body_item, outline=COLORS['active_border'] if is_active else COLORS['bg_node'])
     def get_input_port_y(self, visual=False): 
@@ -1174,6 +1157,7 @@ class FlowEditor(tk.Canvas):
     def on_lmb_press(self,event):
         lx,ly=self.get_logical_pos(event.x,event.y); vx,vy=self.canvasx(event.x),self.canvasy(event.y)
         z = self.zoom
+        # Increase touch area to 10 pixels around click
         items = self.find_overlapping(vx-10*z,vy-10*z,vx+10*z,vy+10*z)
         for item in items:
             t_list = self.gettags(item)
@@ -1266,7 +1250,7 @@ class FlowEditor(tk.Canvas):
                 if "port_in" in tags: 
                      self.history.save_state(); self.links=[l for l in self.links if not l['target']==nid]; self.redraw_links(); return
         lx, ly = self.get_logical_pos(event.x, event.y); node = next((n for n in reversed(list(self.nodes.values())) if n.contains(lx, ly)), None)
-        m=tk.Menu(self,tearoff=0,bg=COLORS['bg_card'],fg=COLORS['fg_text'],font=('Microsoft YaHei', int(8 * SCALE_FACTOR)))
+        m=tk.Menu(self,tearoff=0,bg=COLORS['bg_card'],fg=COLORS['fg_text'],font=FONTS['small'])
         if node:
             m.add_command(label="📥 复制",command=lambda: (self.history.save_state(), self.add_node(node.type, node.x+20, node.y+20, data=copy.deepcopy(node.data), save_history=False)))
             m.add_command(label="🔴 断点",command=lambda: setattr(node, 'has_breakpoint', not node.has_breakpoint) or node.draw())
@@ -1310,19 +1294,20 @@ class FlowEditor(tk.Canvas):
             self.app.core.load_project(data)
             breakpoints = set(data.get('breakpoints', []))
             
+            # Find the maximum existing node number in the loaded data
             max_node_number = 0
             for n_data in data.get('nodes',{}).values():
                 node_number = n_data.get('data', {}).get('node_number', 0)
                 if node_number > max_node_number:
                     max_node_number = node_number
+            
+            # Update the global node number counter
             GraphNode.next_node_number = max_node_number + 1
             
             for nid,n_data in data.get('nodes',{}).items():
                 d=n_data.get('data',{})
                 if 'image' in d: d['tk_image'] = ImageUtils.make_thumb(d['image'])
-                if 'b64_preview' in d and (img:=ImageUtils.b64_to_img(d['b64_preview'])): 
-                    d['roi_preview'] = img 
-                
+                if 'b64_preview' in d and (img:=ImageUtils.b64_to_img(d['b64_preview'])): d['roi_preview'] = ImageUtils.make_thumb(img)
                 n = self.add_node(n_data['type'],n_data['x'],n_data['y'],data=d,node_id=nid, save_history=False)
                 if n_data.get('breakpoint', False) or nid in breakpoints: n.has_breakpoint = True; n.draw()
             self.links=data.get('links',[])
@@ -1352,10 +1337,15 @@ class PropertyPanel(tk.Frame):
         
         def on_content_configure(event):
             self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-            if event.height <= self.canvas.winfo_height():
-                self.scrollbar.pack_forget(); self.canvas.pack(side='left', fill='both', expand=True)
+            # Check if scrolling is needed
+            canvas_height = self.canvas.winfo_height()
+            content_height = event.height
+            if content_height <= canvas_height:
+                self.scrollbar.pack_forget()
+                self.canvas.pack(side='left', fill='both', expand=True)
             else:
-                self.scrollbar.pack(side='right', fill='y'); self.canvas.pack(side='left', fill='both', expand=True)
+                self.scrollbar.pack(side='right', fill='y')
+                self.canvas.pack(side='left', fill='both', expand=True)
         self.content.bind("<Configure>", on_content_configure)
         
         def on_canvas_configure(event):
@@ -1365,22 +1355,22 @@ class PropertyPanel(tk.Frame):
         self.show_empty()
     
     def clear(self): 
-        for w in self.content.winfo_children(): 
-            try: w.destroy()
-            except: pass
+        for w in self.content.winfo_children(): w.destroy()
         self.current_node = None; self.static_monitor_active = False; self.is_monitoring_audio = False
 
-    def show_empty(self): self.clear(); tk.Label(self.content, text="未选择节点", bg=COLORS['bg_panel'], fg=COLORS['fg_sub'], font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(pady=40)
+    def show_empty(self): self.clear(); tk.Label(self.content, text="未选择节点", bg=COLORS['bg_panel'], fg=COLORS['fg_sub'], font=FONTS['small']).pack(pady=40)
     def show_multi_select(self, count): self.clear(); tk.Label(self.content, text=f"选中 {count} 个节点", bg=COLORS['bg_panel'], fg=COLORS['accent']).pack(pady=40)
 
     def load_node(self, node):
         self.clear(); self.current_node = node; ntype, data = node.type, node.data
         
+        # Display unique node number
         if ntype != 'reroute':
             f = tk.Frame(self.content, bg=self.content.cget('bg')); f.pack(fill='x', pady=2)
-            tk.Label(f, text="节点编号", bg=self.content.cget('bg'), fg=COLORS['fg_sub'], font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(side='left')
+            tk.Label(f, text="节点编号", bg=self.content.cget('bg'), fg=COLORS['fg_sub'], font=FONTS['small']).pack(side='left')
+            # Display as non-editable label
             node_num = data.get('node_number', 'N/A')
-            tk.Label(f, text=str(node_num), bg=COLORS['input_bg'], fg=COLORS['accent'], font=('Microsoft YaHei', int(9 * SCALE_FACTOR)), padx=5, pady=2).pack(fill='x', expand=True, pady=2, ipady=3)
+            tk.Label(f, text=str(node_num), bg=COLORS['input_bg'], fg=COLORS['accent'], font=FONTS['code'], padx=5, pady=2).pack(fill='x', expand=True, pady=2, ipady=3)
         
         if ntype != 'reroute': self._input(self.content, "节点名称", '_user_title', data.get('_user_title', node.title_text))
 
@@ -1389,17 +1379,13 @@ class PropertyPanel(tk.Frame):
         elif ntype == 'loop':
              self._chk(self.content, "无限循环", 'infinite', data.get('infinite', True))
              if not data.get('infinite', True): self._input(self.content, "循环次数", 'count', data.get('count', 5), safe_int)
-        elif ntype == 'notify':
-             self._input(self.content, "提示内容", 'msg', data.get('msg', '执行到此节点'))
-             self._input(self.content, "持续时间(秒)", 'duration', data.get('duration', 2.0), safe_float)
-             self._chk(self.content, "提示音", 'use_sound', data.get('use_sound', False))
         elif ntype == 'set_var':
-            sec = self._create_section("变量设置"); tk.Label(sec, text="每行 'name=value':", bg=sec.cget('bg'), fg=COLORS['fg_text'], font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(anchor='w')
-            txt = tk.Text(sec, height=5, bg=COLORS['input_bg'], fg='white', bd=0, font=('Microsoft YaHei', int(9 * SCALE_FACTOR))); txt.pack(fill='x', pady=(2,5))
+            sec = self._create_section("变量设置"); tk.Label(sec, text="每行 'name=value':", bg=sec.cget('bg'), fg=COLORS['fg_text'], font=FONTS['small']).pack(anchor='w')
+            txt = tk.Text(sec, height=5, bg=COLORS['input_bg'], fg='white', bd=0, font=FONTS['code']); txt.pack(fill='x', pady=(2,5))
             existing = "".join([f"{i.get('name')}={i.get('value')}\n" for i in data.get('batch_vars', [])])
             if not existing and data.get('var_name'): existing = f"{data.get('var_name')}={data.get('var_value')}"
             txt.insert('1.0', existing)
-            def save_vars(ev=None): self._save('batch_vars', [{'name':l.split('=')[0].strip(),'value':l.split('=')[1].strip()} for l in txt.get('1.0', 'end').strip().split('\n') if '=' in l], self.current_node)
+            def save_vars(ev=None): self._save('batch_vars', [{'name':l.split('=')[0].strip(),'value':l.split('=')[1].strip()} for l in txt.get('1.0', 'end').strip().split('\n') if '=' in l])
             txt.bind("<FocusOut>", save_vars); self._btn(sec, "💾 保存变量列表", save_vars)
 
         # 动作类
@@ -1408,14 +1394,14 @@ class PropertyPanel(tk.Frame):
             self._input(sec, "进程名 (Exe)", 'exe_name', data.get('exe_name', ''))
             self._input(sec, "类名 (Class)", 'class_name', data.get('class_name', ''))
             self._input(sec, "标题包含", 'title', data.get('title', ''))
-            tk.Label(sec, text="匹配策略:", bg=sec.cget('bg'), fg=COLORS['accent'], font=('Microsoft YaHei', int(9 * SCALE_FACTOR))).pack(anchor='w', pady=(5,0))
+            tk.Label(sec, text="匹配策略:", bg=sec.cget('bg'), fg=COLORS['accent'], font=FONTS['small']).pack(anchor='w', pady=(5,0))
             f_chk = tk.Frame(sec, bg=sec.cget('bg')); f_chk.pack(fill='x')
             self._chk(f_chk, "匹配进程", 'use_exe', data.get('use_exe', True))
             self._chk(f_chk, "匹配类名", 'use_class', data.get('use_class', True))
             self._chk(f_chk, "匹配标题", 'use_title', data.get('use_title', False))
             tk.Frame(sec, height=1, bg=COLORS['bg_header']).pack(fill='x', pady=5)
             def start_pick(): self.app.iconify(); self.app.after(200, self.open_window_picker)
-            tk.Button(sec, text="⌖ 智能拾取窗口", command=start_pick, bg=COLORS['accent'], fg='white', bd=0, font=('Microsoft YaHei', 10, 'bold'), cursor='hand2').pack(fill='x', ipady=3)
+            tk.Button(sec, text="⌖ 智能拾取窗口", command=start_pick, bg=COLORS['accent'], fg='white', bd=0, font=('Segoe UI', 10, 'bold'), cursor='hand2').pack(fill='x', ipady=3)
             
         elif ntype == 'open_app':
             sec = self._create_section("程序配置")
@@ -1426,54 +1412,19 @@ class PropertyPanel(tk.Frame):
         elif ntype == 'web': self._input(self.content, "URL", 'url', data.get('url', ''))
         elif ntype == 'mouse':
             sec = self._create_section("鼠标操作")
-            
-            # 使用闭包保存数据，并显式重载（因为改变动作会改变UI布局）
-            def on_action_change(e):
-                val = {v:k for k,v in MOUSE_ACTIONS.items()}.get(e.widget.get())
-                self._save('mouse_action', val, self.current_node)
-                self.load_node(self.current_node)
-
-            self._combo(sec, "动作", 'mouse_action', list(MOUSE_ACTIONS.values()), MOUSE_ACTIONS.get(data.get('mouse_action', 'click'), '点击'), on_action_change)
-            
-            if data.get('mouse_action','click') in ['click', 'double_click']:
-                self._combo(sec, "按键", 'mouse_button', list(MOUSE_BUTTONS.values()), MOUSE_BUTTONS.get(data.get('mouse_button', 'left')), lambda e: self._save('mouse_button', {v:k for k,v in MOUSE_BUTTONS.items()}.get(e.widget.get()), self.current_node))
-                if data.get('mouse_action') == 'click':
-                    self._combo(sec, "次数", 'click_count', ['单击','双击'], '单击' if str(data.get('click_count',1))=='1' else '双击', lambda e: self._save('click_count', 1 if e.widget.get()=='单击' else 2, self.current_node))
-            
-            if data.get('mouse_action') in ['click', 'move', 'double_click']:
+            self._combo(sec, "动作", 'mouse_action', list(MOUSE_ACTIONS.values()), MOUSE_ACTIONS.get(data.get('mouse_action', 'click'), '点击'), lambda e: [self._save('mouse_action', {v:k for k,v in MOUSE_ACTIONS.items()}.get(e.widget.get())), self.load_node(node)])
+            if data.get('mouse_action','click') == 'click':
+                self._combo(sec, "按键", 'mouse_button', list(MOUSE_BUTTONS.values()), MOUSE_BUTTONS.get(data.get('mouse_button', 'left')), lambda e: self._save('mouse_button', {v:k for k,v in MOUSE_BUTTONS.items()}.get(e.widget.get())))
+                self._combo(sec, "次数", 'click_count', ['单击','双击'], '单击' if str(data.get('click_count',1))=='1' else '双击', lambda e: self._save('click_count', 1 if e.widget.get()=='单击' else 2))
+            if data.get('mouse_action') in ['click', 'move', 'drag']:
                 coord = tk.Frame(sec, bg=sec.cget('bg')); coord.pack(fill='x', pady=5)
-                self._compact_input(coord, "X", 'x', data.get('x', 0), safe_int)
-                self._compact_input(coord, "Y", 'y', data.get('y', 0), safe_int)
-                self._btn_icon(coord, "📍", self.app.pick_coordinate, width=3)
-            elif data.get('mouse_action') == 'drag':
-                start_coord = tk.Frame(sec, bg=sec.cget('bg')); start_coord.pack(fill='x', pady=5)
-                tk.Label(start_coord, text="起始坐标:", bg=sec.cget('bg'), fg=COLORS['accent'], font=('Microsoft YaHei', int(9 * SCALE_FACTOR))).pack(anchor='w', pady=(5,0))
-                start_input = tk.Frame(start_coord, bg=sec.cget('bg')); start_input.pack(fill='x', pady=2)
-                self._compact_input(start_input, "X", 'start_x', data.get('start_x', 0), safe_int)
-                self._compact_input(start_input, "Y", 'start_y', data.get('start_y', 0), safe_int)
-                self._btn_icon(start_input, "📍", self.app.pick_start_coordinate, width=3)
-                end_coord = tk.Frame(sec, bg=sec.cget('bg')); end_coord.pack(fill='x', pady=5)
-                tk.Label(end_coord, text="目标坐标:", bg=sec.cget('bg'), fg=COLORS['accent'], font=('Microsoft YaHei', int(9 * SCALE_FACTOR))).pack(anchor='w', pady=(5,0))
-                end_input = tk.Frame(end_coord, bg=sec.cget('bg')); end_input.pack(fill='x', pady=2)
-                self._compact_input(end_input, "X", 'end_x', data.get('end_x', 0), safe_int)
-                self._compact_input(end_input, "Y", 'end_y', data.get('end_y', 0), safe_int)
-                self._btn_icon(end_input, "📍", self.app.pick_end_coordinate, width=3)
+                self._compact_input(coord, "X", 'x', data.get('x', 0), safe_int); self._compact_input(coord, "Y", 'y', data.get('y', 0), safe_int); self._btn_icon(coord, "📍", self.app.pick_coordinate, width=3)
         
         elif ntype == 'keyboard':
             sec = self._create_section("键盘操作")
-            
-            def on_mode_change(e):
-                val = 'text' if e.widget.get()=='输入文本' else 'key'
-                self._save('kb_mode', val, self.current_node)
-                self.load_node(self.current_node)
-
-            self._combo(sec, "模式", 'kb_mode', ['输入文本', '按键组合'], '输入文本' if data.get('kb_mode','text')=='text' else '按键组合', on_mode_change)
-            
-            if data.get('kb_mode','text')=='text': 
-                self._input(sec, "文本", 'text', data.get('text', ''))
-                self._chk(sec, "粘贴模式 (快速/防乱码)", 'use_paste', data.get('use_paste', True))
-                self._chk(sec, "按回车", 'press_enter', data.get('press_enter', False))
-            else: self._input(sec, "组合键", 'key_name', data.get('key_name', '')); tk.Label(sec, text="例: ctrl+c", bg=sec.cget('bg'), fg=COLORS['fg_sub'], font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(anchor='w')
+            self._combo(sec, "模式", 'kb_mode', ['输入文本', '按键组合'], '输入文本' if data.get('kb_mode','text')=='text' else '按键组合', lambda e: [self._save('kb_mode', 'text' if e.widget.get()=='输入文本' else 'key'), self.load_node(node)])
+            if data.get('kb_mode','text')=='text': self._input(sec, "文本", 'text', data.get('text', '')); self._chk(sec, "按回车", 'press_enter', data.get('press_enter', False))
+            else: self._input(sec, "组合键", 'key_name', data.get('key_name', '')); tk.Label(sec, text="例: ctrl+c", bg=sec.cget('bg'), fg=COLORS['fg_sub'], font=FONTS['small']).pack(anchor='w')
 
         # 视觉类
         elif ntype == 'image':
@@ -1483,69 +1434,35 @@ class PropertyPanel(tk.Frame):
             search = self._create_section("匹配参数")
             self._input(search, "相似度", 'confidence', data.get('confidence', 0.9), safe_float)
             self._input(search, "超时(s)", 'timeout', data.get('timeout', 10.0), safe_float)
-            
-            curr_strat = data.get('match_strategy', 'hybrid')
-            self._combo(search, "算法", 'match_strategy', list(MATCH_STRATEGY_MAP.values()), MATCH_STRATEGY_MAP.get(curr_strat, '智能混合'), lambda e: self._save('match_strategy', {v:k for k,v in MATCH_STRATEGY_MAP.items()}.get(e.widget.get()), self.current_node))
-
-            self._chk(search, "未找到时尝试滚动", 'auto_scroll', data.get('auto_scroll', False))
-            if data.get('auto_scroll', False):
-                self._input(search, "滚动量(负数向下)", 'scroll_amount', data.get('scroll_amount', -500), safe_int)
-
             act = self._create_section("找到后执行")
-            self._combo(act, "动作", 'click_type', list(ACTION_MAP.values()), ACTION_MAP.get(data.get('click_type', 'click')), lambda e: self._save('click_type', {v:k for k,v in ACTION_MAP.items()}.get(e.widget.get()), self.current_node))
+            self._combo(act, "动作", 'click_type', list(ACTION_MAP.values()), ACTION_MAP.get(data.get('click_type', 'click')), lambda e: self._save('click_type', {v:k for k,v in ACTION_MAP.items()}.get(e.widget.get())))
             off = tk.Frame(act, bg=act.cget('bg')); off.pack(fill='x', pady=5)
-            self._compact_input(off, "偏X", 'offset_x', data.get('offset_x', 0), safe_int)
-            self._compact_input(off, "Y", 'offset_y', data.get('offset_y', 0), safe_int)
-            self._btn_icon(off, "🎯", self.open_visual_offset_picker, bg=COLORS['control'], width=3)
-            self._btn(act, "⚡ 测试当前匹配", self.start_test_match)
+            self._compact_input(off, "偏X", 'offset_x', data.get('offset_x', 0), safe_int); self._compact_input(off, "Y", 'offset_y', data.get('offset_y', 0), safe_int); self._btn_icon(off, "🎯", self.open_visual_offset_picker, bg=COLORS['control'], width=3)
 
-        elif ntype == 'if_img':
-            sec = self._create_section("多图检测配置")
-            imgs = data.get('images', [])
-            stat_frame = tk.Frame(sec, bg=sec.cget('bg'))
-            stat_frame.pack(fill='x', pady=(0, 5))
-            tk.Label(stat_frame, text=f"📚 已存参考图: {len(imgs)} 张", bg=sec.cget('bg'), fg=COLORS['fg_text'], font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(anchor='w')
-            self._btn(sec, "📸 截取并添加参考图", self.app.do_snip, bg=COLORS['accent'])
-            if imgs:
-                def clear_imgs():
-                    if messagebox.askyesno("确认清空", "确定要删除所有已保存的检测图片吗？"):
-                        self._save('images', [], self.current_node)
-                        self.load_node(self.current_node)
-                self._btn(sec, "🗑️ 清空所有图片", clear_imgs, bg=COLORS['danger'])
-            param = self._create_section("匹配参数")
-            self._input(param, "相似度(0.1-1.0)", 'confidence', data.get('confidence', 0.9), safe_float)
-            self._btn(param, "⚡ 测试当前屏幕匹配", self.start_test_match)
-
+        # === 恢复丢失功能：静止检测 ===
         elif ntype == 'if_static':
              base_sec = self._create_section("监控区域")
-             if 'roi_preview' in data: 
-                 preview_img = data['roi_preview']
-                 tk_preview = None
-                 if isinstance(preview_img, Image.Image):
-                    tk_preview = ImageUtils.make_thumb(preview_img)
-                 elif isinstance(preview_img, ImageTk.PhotoImage):
-                    tk_preview = preview_img
-
-                 if tk_preview:
-                    c = tk.Canvas(base_sec, width=240, height=135, bg='black', highlightthickness=0); c.pack(pady=5)
-                    c.create_image(120, 67, image=tk_preview, anchor='center')
-                    c.image = tk_preview
-
+             if 'roi_preview' in data and data['roi_preview']: 
+                 c = tk.Canvas(base_sec, width=240, height=135, bg='black', highlightthickness=0); c.pack(pady=5)
+                 c.create_image(120, 67, image=data['roi_preview'], anchor='center')
              self._btn(base_sec, "📸 截取监控区域", self.app.do_snip)
+             
              param_sec = self._create_section("检测参数")
              self._input(param_sec, "静止持续(s)", 'duration', data.get('duration', 5.0), safe_float)
              self._input(param_sec, "最大超时(s)", 'timeout', data.get('timeout', 20.0), safe_float)
              self._input(param_sec, "灵敏度(0-1)", 'threshold', data.get('threshold', 0.98), safe_float)
+             
              monitor_frame = self._create_section("实时测试")
              self.lbl_monitor_status = tk.Label(monitor_frame, text="等待启动...", bg=monitor_frame.cget('bg'), fg=COLORS['fg_sub'], font=('Consolas', 9))
              self.lbl_monitor_status.pack(fill='x', pady=5)
              self.btn_monitor = self._btn(monitor_frame, "🔴 启动监控", self._toggle_static_monitor)
 
+        # === 恢复丢失功能：声音检测 ===
         elif ntype == 'if_sound':
              sec = self._create_section("声音检测")
              SOUND_MODES = {'has_sound': '检测声音', 'is_silent': '检测静音'}
              curr_mode = data.get('detect_mode', 'has_sound')
-             self._combo(sec, "模式", 'detect_mode', list(SOUND_MODES.values()), SOUND_MODES.get(curr_mode), lambda e:self._save('detect_mode', {v: k for k, v in SOUND_MODES.items()}.get(e.widget.get()), self.current_node))
+             self._combo(sec, "模式", 'detect_mode', list(SOUND_MODES.values()), SOUND_MODES.get(curr_mode), lambda e:self._save('detect_mode', {v: k for k, v in SOUND_MODES.items()}.get(e.widget.get())))
              self._input(sec, "阈值(0-1)", 'threshold', data.get('threshold', 0.02), safe_float)
              self._input(sec, "超时(秒)", 'timeout', data.get('timeout', 10.0), safe_float)
              btn_text = "⏹ 停止" if self.is_monitoring_audio else "🔊 实时监测"
@@ -1553,18 +1470,11 @@ class PropertyPanel(tk.Frame):
 
     def open_window_picker(self):
         top = tk.Toplevel(self.app)
-        top.geometry(f"{VW}x{VH}+{VX}+{VY}")
-        top.overrideredirect(True)
-        top.attributes("-topmost", True, "-alpha", 0.3)
+        top.attributes("-fullscreen", True, "-topmost", True, "-alpha", 0.3)
         top.configure(bg="black", cursor="crosshair")
-        
         canvas = tk.Canvas(top, bg="black", highlightthickness=0); canvas.pack(fill='both', expand=True)
-        
-        center_x = user32.GetSystemMetrics(0) // 2 - VX
-        center_y = user32.GetSystemMetrics(1) // 2 - VY
-        
-        info_lbl = canvas.create_text(center_x, 50, text="移动鼠标选择窗口...", fill="white", font=('Segoe UI', 14, 'bold'))
-        detail_lbl = canvas.create_text(center_x, 80, text="", fill="#cccccc", font=('Segoe UI', 10))
+        info_lbl = canvas.create_text(top.winfo_screenwidth()//2, 50, text="移动鼠标选择窗口...", fill="white", font=('Segoe UI', 14, 'bold'))
+        detail_lbl = canvas.create_text(top.winfo_screenwidth()//2, 80, text="", fill="#cccccc", font=('Segoe UI', 10))
         self._highlight_rect = canvas.create_rectangle(0, 0, 0, 0, outline='#00ff00', width=4)
         self._temp_win_info = None
 
@@ -1572,21 +1482,17 @@ class PropertyPanel(tk.Frame):
             info = WindowEngine.get_top_window_at_mouse()
             if info and info.get('rect'):
                 r = info['rect']
-                cx, cy = r.left - VX, r.top - VY
-                cw, ch = r.width, r.height
-                canvas.coords(self._highlight_rect, cx, cy, cx+cw, cy+ch)
+                canvas.coords(self._highlight_rect, r.left, r.top, r.left+r.width, r.top+r.height)
                 canvas.itemconfig(info_lbl, text=f"进程: {info['exe_name']}")
                 canvas.itemconfig(detail_lbl, text=f"类名: {info['class_name']}\n标题: {info['title']}")
                 self._temp_win_info = info
 
         def on_click(event):
             if self._temp_win_info:
-                self._save('exe_name', self._temp_win_info['exe_name'], self.current_node)
-                self._save('class_name', self._temp_win_info['class_name'], self.current_node)
-                self._save('title', self._temp_win_info['title'], self.current_node)
-                self._save('use_exe', True, self.current_node)
-                self._save('use_class', True, self.current_node)
-                self._save('use_title', False, self.current_node) 
+                self._save('exe_name', self._temp_win_info['exe_name'])
+                self._save('class_name', self._temp_win_info['class_name'])
+                self._save('title', self._temp_win_info['title'])
+                self._save('use_exe', True); self._save('use_class', True); self._save('use_title', False) 
                 self.load_node(self.current_node)
                 self.app.log(f"已绑定进程: {self._temp_win_info['exe_name']}", "success")
             top.destroy(); self.app.deiconify()
@@ -1598,75 +1504,41 @@ class PropertyPanel(tk.Frame):
         tk.Label(f, text=text, bg=COLORS['bg_panel'], fg=COLORS['accent'], font=('Segoe UI', 9, 'bold')).pack(anchor='w')
         tk.Frame(f, height=1, bg=COLORS['bg_header']).pack(fill='x', pady=(2, 5))
         return f
-    
-    # 修复核心：使用 StringVar 实时同步，禁止盲目刷新
     def _input(self, parent, label, key, val, vfunc=None):
-        target_node = self.current_node 
         f = tk.Frame(parent, bg=parent.cget('bg')); f.pack(fill='x', pady=2)
-        tk.Label(f, text=label, bg=parent.cget('bg'), fg=COLORS['fg_text'], font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(side='left', padx=(0,5))
-        
-        # 使用 StringVar 绑定变量，实现双向实时同步
-        var = tk.StringVar(value=str(val))
-        def on_change(*args):
-            new_val = var.get()
-            self._save(key, vfunc(new_val) if vfunc else new_val, target_node)
-        var.trace_add("write", on_change)
-        
-        e = tk.Entry(f, bg=COLORS['input_bg'], fg='white', bd=0, insertbackground='white', font=('Microsoft YaHei', int(9 * SCALE_FACTOR)), textvariable=var)
-        e.pack(fill='x', pady=2, ipady=3, expand=True)
-        # 保留回车取消焦点的功能
-        e.bind("<Return>", lambda ev: self.canvas.focus_set())
-        
+        tk.Label(f, text=label, bg=parent.cget('bg'), fg=COLORS['fg_text'], font=FONTS['small']).pack(side='left', padx=(0,5))
+        e = tk.Entry(f, bg=COLORS['input_bg'], fg='white', bd=0, insertbackground='white', font=FONTS['code']); e.insert(0, str(val)); e.pack(fill='x', pady=2, ipady=3, expand=True)
+        e.bind("<FocusOut>", lambda ev: self._save(key, vfunc(e.get()) if vfunc else e.get()))
+        e.bind("<Return>", lambda ev: [self._save(key, vfunc(e.get()) if vfunc else e.get()), self.canvas.focus_set()])
     def _file_picker(self, parent, label, key, val):
-        target_node = self.current_node
         f = tk.Frame(parent, bg=parent.cget('bg')); f.pack(fill='x', pady=2)
-        tk.Label(f, text=label, bg=parent.cget('bg'), fg=COLORS['fg_text'], font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(side='left')
+        tk.Label(f, text=label, bg=parent.cget('bg'), fg=COLORS['fg_text'], font=FONTS['small']).pack(side='left')
         input_container = tk.Frame(f, bg=COLORS['input_bg']); input_container.pack(side='left', fill='x', expand=True, padx=2)
         display_text = os.path.basename(val) if val else "点击选择..."
         if len(display_text) > 20: display_text = display_text[:17] + "..."
-        lbl_display = tk.Label(input_container, text=f"📄 {display_text}", bg=COLORS['input_bg'], fg='white' if val else '#888', font=('Microsoft YaHei', int(9 * SCALE_FACTOR)), anchor='w'); lbl_display.pack(side='left', fill='x', expand=True, padx=5)
+        lbl_display = tk.Label(input_container, text=f"📄 {display_text}", bg=COLORS['input_bg'], fg='white' if val else '#888', font=FONTS['code'], anchor='w'); lbl_display.pack(side='left', fill='x', expand=True, padx=5)
         if val: 
             def on_enter(e): self.app.log(f"路径: {val}", "info") 
             lbl_display.bind("<Enter>", on_enter)
-            tk.Button(input_container, text="×", command=lambda: [self._save(key, "", target_node), self.load_node(self.current_node)], bg=COLORS['input_bg'], fg=COLORS['danger'], bd=0, cursor="hand2", font=('Arial', 10, 'bold')).pack(side='right', padx=2)
+            tk.Button(input_container, text="×", command=lambda: [self._save(key, ""), self.load_node(self.current_node)], bg=COLORS['input_bg'], fg=COLORS['danger'], bd=0, cursor="hand2", font=('Arial', 10, 'bold')).pack(side='right', padx=2)
         def pick(): 
-            if (path := filedialog.askopenfilename(filetypes=[("Executable", "*.exe"), ("All", "*.*")])): self._save(key, path, target_node); self.load_node(self.current_node)
+            if (path := filedialog.askopenfilename(filetypes=[("Executable", "*.exe"), ("All", "*.*")])): self._save(key, path); self.load_node(self.current_node)
         lbl_display.bind("<Button-1>", lambda e: pick()); input_container.bind("<Button-1>", lambda e: pick()); self._btn_icon(f, "📂", pick)
-        
     def _compact_input(self, parent, label, key, val, vfunc=None):
-        target_node = self.current_node
-        tk.Label(parent, text=label, bg=parent.cget('bg'), fg=COLORS['fg_text'], font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(side='left', padx=(5,2))
-        
-        var = tk.StringVar(value=str(val))
-        def on_change(*args):
-            new_val = var.get()
-            self._save(key, vfunc(new_val) if vfunc else new_val, target_node)
-        var.trace_add("write", on_change)
-        
-        e = tk.Entry(parent, bg=COLORS['input_bg'], fg='white', bd=0, width=6, textvariable=var)
-        e.pack(side='left', padx=2)
-        
+        tk.Label(parent, text=label, bg=parent.cget('bg'), fg=COLORS['fg_text'], font=FONTS['small']).pack(side='left', padx=(5,2))
+        e = tk.Entry(parent, bg=COLORS['input_bg'], fg='white', bd=0, width=6); e.insert(0, str(val)); e.pack(side='left', padx=2)
+        e.bind("<FocusOut>", lambda ev: self._save(key, vfunc(e.get()) if vfunc else e.get()))
     def _combo(self, parent, label, key, values, val, cmd):
         f = tk.Frame(parent, bg=parent.cget('bg')); f.pack(fill='x', pady=2)
-        tk.Label(f, text=label, bg=parent.cget('bg'), fg=COLORS['fg_text'], font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(side='left', padx=(0,5))
-        cb = ttk.Combobox(f, values=values, state='readonly', font=('Microsoft YaHei', int(9 * SCALE_FACTOR))); cb.set(val); cb.pack(fill='x', pady=2, expand=True); cb.bind("<<ComboboxSelected>>", cmd)
-        
-    def _btn(self, parent, txt, cmd, bg=None): return tk.Button(parent, text=txt, command=cmd, bg=bg or COLORS['btn_bg'], fg='white', bd=0, activebackground=COLORS['btn_hover'], relief='flat', pady=2, font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(fill='x', pady=3, ipady=1) or parent.winfo_children()[-1]
+        tk.Label(f, text=label, bg=parent.cget('bg'), fg=COLORS['fg_text'], font=FONTS['small']).pack(side='left', padx=(0,5))
+        cb = ttk.Combobox(f, values=values, state='readonly', font=FONTS['code']); cb.set(val); cb.pack(fill='x', pady=2, expand=True); cb.bind("<<ComboboxSelected>>", cmd)
+    def _btn(self, parent, txt, cmd, bg=None): return tk.Button(parent, text=txt, command=cmd, bg=bg or COLORS['btn_bg'], fg='white', bd=0, activebackground=COLORS['btn_hover'], relief='flat', pady=2, font=FONTS['small']).pack(fill='x', pady=3, ipady=1) or parent.winfo_children()[-1]
     def _btn_icon(self, parent, txt, cmd, bg=None, color=None, width=None): tk.Button(parent, text=txt, command=cmd, bg=bg or COLORS['bg_card'], fg=color or 'white', bd=0, activebackground=COLORS['btn_hover'], relief='flat', width=width).pack(side='right', padx=2)
-    
     def _chk(self, parent, txt, key, val):
-        target_node = self.current_node
         var = tk.BooleanVar(value=val)
-        # Checkbox 仍然需要 reload 因为可能影响其他 UI 显示
-        tk.Checkbutton(parent, text=txt, variable=var, bg=parent.cget('bg'), fg='white', selectcolor=COLORS['bg_app'], activebackground=parent.cget('bg'), borderwidth=0, highlightthickness=0, command=lambda: [self._save(key, var.get(), target_node), self.load_node(self.current_node)]).pack(anchor='w', pady=2)
-    
-    def _save(self, key, val, node=None):
-        target = node if node else self.current_node
-        if target: 
-            try:
-                target.update_data(key, val)
-            except Exception as e:
-                pass
+        tk.Checkbutton(parent, text=txt, variable=var, bg=parent.cget('bg'), fg='white', selectcolor=COLORS['bg_app'], activebackground=parent.cget('bg'), borderwidth=0, highlightthickness=0, command=lambda: [self._save(key, var.get()), self.load_node(self.current_node)]).pack(anchor='w', pady=2)
+    def _save(self, key, val): 
+        if self.current_node: self.current_node.update_data(key, val)
 
     def _draw_image_preview(self, parent, data):
         c = tk.Canvas(parent, width=240, height=135, bg='black', highlightthickness=0); c.pack(pady=5)
@@ -1677,33 +1549,26 @@ class PropertyPanel(tk.Frame):
         def on_click(e):
             rx = max(0.0, min(1.0, (e.x - off_x) / dw if dw > 0 else 0))
             ry = max(0.0, min(1.0, (e.y - off_y) / dh if dh > 0 else 0))
-            self._save('relative_click_pos', (rx, ry), self.current_node); self.load_node(self.current_node) 
+            self._save('relative_click_pos', (rx, ry)); self.load_node(self.current_node) 
         c.bind("<Button-1>", on_click)
         rx, ry = data.get('relative_click_pos', (0.5, 0.5)); cx, cy = off_x + (rx * dw), off_y + (ry * dh)
         c.create_oval(cx-3, cy-3, cx+3, cy+3, fill=COLORS['marker'], outline='white', width=1)
 
     def open_visual_offset_picker(self):
-        self.app.iconify(); time.sleep(0.3); full_screen = ImageGrab.grab(all_screens=True, bbox=(VX, VY, VX+VW, VY+VH))
+        self.app.iconify(); time.sleep(0.3); full_screen = ImageGrab.grab()
         try:
             res = VisionEngine.locate(self.current_node.data.get('image'), confidence=0.8, timeout=1.0)
             if not res: self.app.deiconify(); messagebox.showerror("错误", "未在屏幕找到基准图"); return
-            top = tk.Toplevel(self.app)
-            top.geometry(f"{VW}x{VH}+{VX}+{VY}")
-            top.overrideredirect(True)
-            top.attributes("-topmost", True); top.config(cursor="crosshair")
+            top = tk.Toplevel(self.app); top.attributes("-fullscreen", True, "-topmost", True); top.config(cursor="crosshair")
             cv = tk.Canvas(top, width=full_screen.width, height=full_screen.height); cv.pack()
             tk_img = ImageTk.PhotoImage(full_screen); cv.create_image(0,0,image=tk_img,anchor='nw')
-            
-            # res是虚拟坐标，需要转为canvas相对坐标
-            cv.create_rectangle(res.left-VX, res.top-VY, res.left+res.width-VX, res.top+res.height-VY, outline='green', width=2)
-            cx, cy = res.left+res.width/2 - VX, res.top+res.height/2 - VY
-            
+            cv.create_rectangle(res.left, res.top, res.left+res.width, res.top+res.height, outline='green', width=2)
+            cx, cy = res.left+res.width/2, res.top+res.height/2
             cv.create_line(cx-10, cy, cx+10, cy, fill='red', width=2); cv.create_line(cx, cy-10, cx, cy+10, fill='red', width=2)
             line_id = cv.create_line(cx, cy, cx, cy, fill='blue', dash=(4, 4), width=1)
             text_id = cv.create_text(cx, cy, text="Offset: 0, 0", fill='blue', anchor='sw', font=('Consolas', 10, 'bold'))
-            
             def on_motion(e): cv.coords(line_id, cx, cy, e.x, e.y); cv.coords(text_id, e.x + 10, e.y - 10); cv.itemconfig(text_id, text=f"Offset: {int(e.x-cx)}, {int(e.y-cy)}")
-            def confirm(e): self._save('offset_x', int(e.x-cx), self.current_node); self._save('offset_y', int(e.y-cy), self.current_node); top.destroy(); self.app.deiconify(); self.load_node(self.current_node)
+            def confirm(e): self._save('offset_x', int(e.x-cx)); self._save('offset_y', int(e.y-cy)); top.destroy(); self.app.deiconify(); self.load_node(self.current_node)
             cv.bind("<Motion>", on_motion); cv.bind("<Button-1>", confirm); cv.bind("<Button-3>", lambda e: [top.destroy(), self.app.deiconify()])
             top.img_ref = tk_img; self.wait_window(top)
         except Exception as e: self.app.deiconify(); traceback.print_exc()
@@ -1723,6 +1588,7 @@ class PropertyPanel(tk.Frame):
         except: pass
         self.app.deiconify(); messagebox.showinfo("测试结果", res_txt)
 
+    # 监控线程逻辑 (从 main.py 恢复)
     def _toggle_static_monitor(self):
         if self.static_monitor_active:
             self.static_monitor_active = False
@@ -1737,22 +1603,10 @@ class PropertyPanel(tk.Frame):
         roi = self.current_node.data.get('roi')
         thr = safe_float(self.current_node.data.get('threshold', 0.98))
         dur = safe_float(self.current_node.data.get('duration', 5.0))
-        
-        # 获取初始帧
-        if self.context['window_handle'] and self.context['window_rect']:
-             win_offset_x, win_offset_y = self.context['window_offset']
-             abs_x = roi[0] + win_offset_x
-             abs_y = roi[1] + win_offset_y
-        else:
-             abs_x = roi[0]
-             abs_y = roi[1]
-             
-        target_bbox = (abs_x, abs_y, abs_x + roi[2], abs_y + roi[3])
-        last_frame = VisionEngine.capture_screen(bbox=target_bbox)
-        
+        last_frame = VisionEngine.capture_screen(bbox=roi)
         static_start = time.time()
         while self.static_monitor_active and self.current_node and self.current_node.type == 'if_static':
-            curr = VisionEngine.capture_screen(bbox=target_bbox)
+            curr = VisionEngine.capture_screen(bbox=roi)
             is_static = VisionEngine.compare_images(last_frame, curr, thr)
             elapsed = time.time() - static_start if is_static else 0
             if self.lbl_monitor_status.winfo_exists():
@@ -1774,7 +1628,7 @@ class PropertyPanel(tk.Frame):
             if vol > 0.001: self.app.log(f"📊 音量峰值: {vol:.4f}", "info")
             time.sleep(0.5)
 
-# --- 7. 设置对话框 ---
+# --- 7. 设置对话框 (从 main.py 恢复) ---
 class SettingsDialog(tk.Toplevel):
     def __init__(self, parent, app):
         super().__init__(parent); self.app = app
@@ -1825,16 +1679,17 @@ class SettingsDialog(tk.Toplevel):
 # --- 8. 主程序 ---
 class App(tk.Tk):
     def __init__(self):
-        super().__init__(); self.title("Qflow 1.7.0 - QwejayHuang"); self.geometry("1400x1100")
+        super().__init__(); self.title("Qflow 1.6 —— QwejayHuang"); self.geometry("1400x1100")
+        # 设置应用程序图标
         try:
+            # PyInstaller创建临时文件夹并把路径存储在 _MEIPASS 中
             if hasattr(sys, '_MEIPASS'):
                 icon_path = os.path.join(sys._MEIPASS, 'icon.ico')
             else:
                 icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon.ico')
-            if os.path.exists(icon_path):
-                self.iconbitmap(icon_path)
-        except Exception: pass
-        
+            self.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"无法设置图标: {e}")
         self.core = AutomationCore(self.log, self); self.log_q = queue.Queue()
         self.drag_node_type, self.drag_ghost = None, None
         self.hotkey_listener = None
@@ -1846,7 +1701,7 @@ class App(tk.Tk):
         for widget in self.winfo_children(): widget.destroy()
 
         title_bar = tk.Frame(self, bg=COLORS['bg_app'], height=50); title_bar.pack(fill='x', pady=5, padx=20)
-        tk.Label(title_bar, text="QFLOW 1.7", font=('Impact', 24), bg=COLORS['bg_app'], fg=COLORS['accent']).pack(side='left', padx=(0, 20))
+        tk.Label(title_bar, text="QFLOW 1.6", font=('Impact', 24), bg=COLORS['bg_app'], fg=COLORS['accent']).pack(side='left', padx=(0, 20))
         
         ops = tk.Frame(title_bar, bg=COLORS['bg_app']); ops.pack(side='left')
         for txt, cmd in [("📂 打开", self.load), ("💾 保存", self.save), ("🗑️ 清空", self.clear), ("⚙️ 设置", self.open_settings)]:
@@ -1865,7 +1720,7 @@ class App(tk.Tk):
     def _build_toolbox(self, p):
         tool_groups = [
             ("应用控制", ['open_app', 'bind_win', 'cmd', 'web']),
-            ("逻辑组件", ['start', 'end', 'loop', 'sequence', 'set_var', 'var_switch', 'notify']),
+            ("逻辑组件", ['start', 'end', 'loop', 'sequence', 'set_var', 'var_switch']),
             ("动作执行", ['mouse', 'keyboard', 'wait']),
             ("视觉/感知", ['image', 'if_img', 'if_static', 'if_sound'])
         ]
@@ -1886,100 +1741,44 @@ class App(tk.Tk):
         if self.editor.winfo_containing(e.x_root, e.y_root) == self.editor: self.editor.add_node(self.drag_node_type, self.editor.canvasx(e.x_root-self.editor.winfo_rootx())/self.editor.zoom, self.editor.canvasy(e.y_root-self.editor.winfo_rooty())/self.editor.zoom)
 
     def do_snip(self): self.iconify(); self.update(); self.after(400, lambda: self._start_snip_overlay())
-    
     def _start_snip_overlay(self):
-        top = tk.Toplevel(self)
-        top.geometry(f"{VW}x{VH}+{VX}+{VY}")
-        top.overrideredirect(True)
-        top.attributes("-topmost", True, "-alpha", 0.3)
-        top.configure(cursor="cross", bg="black")
-        
+        top = tk.Toplevel(self); top.attributes("-fullscreen", True, "-alpha", 0.3, "-topmost", True); top.configure(cursor="cross", bg="black")
         c = tk.Canvas(top, bg="black", highlightthickness=0); c.pack(fill='both', expand=True)
         s, r = [0, 0], [None]
-        
         def dn(e): s[0], s[1] = e.x, e.y; (r[0] and c.delete(r[0])); r[0] = c.create_rectangle(e.x, e.y, e.x, e.y, outline='red', width=2)
         def mv(e): (r[0] and c.coords(r[0], s[0], s[1], e.x, e.y))
         def up(e): 
-            x1 = min(s[0], e.x) + VX
-            y1 = min(s[1], e.y) + VY
-            x2 = max(s[0], e.x) + VX
-            y2 = max(s[1], e.y) + VY
+            x1, y1, x2, y2 = min(s[0], e.x), min(s[1], e.y), max(s[0], e.x), max(s[1], e.y)
             top.destroy(); self.after(200, lambda: self._capture((x1, y1, x2, y2)))
-            
         c.bind("<ButtonPress-1>", dn); c.bind("<B1-Motion>", mv); c.bind("<ButtonRelease-1>", up); top.bind("<Escape>", lambda e: [top.destroy(), self.deiconify()])
 
     def _capture(self, rect):
         x1, y1, x2, y2 = rect; self.deiconify()
         if x2 - x1 < 5: return
         try:
-            img = ImageGrab.grab(bbox=(x1, y1, x2, y2), all_screens=True)
+            img = ImageGrab.grab(bbox=(x1, y1, x2, y2))
             if (n := self.property_panel.current_node): 
                 if n.type == 'if_img': 
                     n.data.setdefault('images', []).append({'id': uuid.uuid4().hex, 'image': img, 'tk_image': ImageUtils.make_thumb(img), 'b64': ImageUtils.img_to_b64(img)})
                 elif n.type == 'if_static':
-                    n.update_data('roi', (x1, y1, x2-x1, y2-y1))
-                    n.data['roi_preview'] = img 
-                    n.data['b64_preview'] = ImageUtils.img_to_b64(img)
-                    n.draw()
+                    n.update_data('roi', (x1, y1, x2-x1, y2-y1)); n.data['roi_preview'] = ImageUtils.make_thumb(img); n.data['b64_preview'] = ImageUtils.img_to_b64(img); n.draw()
                 else: 
                     n.update_data('image', img); n.update_data('tk_image', ImageUtils.make_thumb(img)); n.update_data('b64', ImageUtils.img_to_b64(img))
                 self.property_panel.load_node(n)
-            self.log(f"🖼️ 截取成功 ({x1},{y1})", "success")
+            self.log(f"🖼️ 截取成功", "success")
         except Exception as e: self.log(f"截图失败: {e}", "error")
     
     def pick_coordinate(self): self.iconify(); self.after(500, lambda: self._coord_overlay())
     def _coord_overlay(self):
-        top=tk.Toplevel(self);
-        top.geometry(f"{VW}x{VH}+{VX}+{VY}")
-        top.overrideredirect(True)
-        top.attributes("-topmost",True,"-alpha",0.1);c=tk.Canvas(top,bg="white");c.pack(fill='both',expand=True)
-        def clk(e): 
-            top.destroy(); self.deiconify(); 
-            abs_x = e.x + VX
-            abs_y = e.y + VY
-            if self.property_panel.current_node:
-                self.property_panel.current_node.update_data('x', abs_x)
-                self.property_panel.current_node.update_data('y', abs_y)
-                self.property_panel.load_node(self.property_panel.current_node)
-        c.bind("<Button-1>",clk)
-    
-    def pick_start_coordinate(self): 
-        self.iconify(); self.log("🎯 请选择拖拽起始坐标", "info"); self.after(500, lambda: self._start_coord_overlay())
-    def _start_coord_overlay(self):
-        top=tk.Toplevel(self); top.geometry(f"{VW}x{VH}+{VX}+{VY}"); top.overrideredirect(True)
-        top.attributes("-topmost",True,"-alpha",0.1);c=tk.Canvas(top,bg="white");c.pack(fill='both',expand=True)
-        def clk(e): 
-            top.destroy(); self.deiconify()
-            abs_x, abs_y = e.x + VX, e.y + VY
-            if self.property_panel.current_node:
-                self.property_panel.current_node.update_data('start_x', abs_x)
-                self.property_panel.current_node.update_data('start_y', abs_y)
-                self.property_panel.load_node(self.property_panel.current_node)
-                self.log(f"✅ 起始坐标已设置: ({abs_x}, {abs_y})", "success")
-        c.bind("<Button-1>",clk)
-    
-    def pick_end_coordinate(self): 
-        self.iconify(); self.log("🎯 请选择拖拽目标坐标", "info"); self.after(500, lambda: self._end_coord_overlay())
-    def _end_coord_overlay(self):
-        top=tk.Toplevel(self); top.geometry(f"{VW}x{VH}+{VX}+{VY}"); top.overrideredirect(True)
-        top.attributes("-topmost",True,"-alpha",0.1);c=tk.Canvas(top,bg="white");c.pack(fill='both',expand=True)
-        def clk(e): 
-            top.destroy(); self.deiconify()
-            abs_x, abs_y = e.x + VX, e.y + VY
-            if self.property_panel.current_node:
-                self.property_panel.current_node.update_data('end_x', abs_x)
-                self.property_panel.current_node.update_data('end_y', abs_y)
-                self.property_panel.load_node(self.property_panel.current_node)
-                self.log(f"✅ 目标坐标已设置: ({abs_x}, {abs_y})", "success")
+        top=tk.Toplevel(self);top.attributes("-fullscreen",True,"-alpha",0.1,"-topmost",True);c=tk.Canvas(top,bg="white");c.pack(fill='both',expand=True)
+        def clk(e): top.destroy(); self.deiconify(); (self.property_panel.current_node and (self.property_panel.current_node.update_data('x',e.x_root) or self.property_panel.current_node.update_data('y',e.y_root) or self.property_panel.load_node(self.property_panel.current_node)))
         c.bind("<Button-1>",clk)
 
     # 快捷键与运行控制
     def refresh_hotkeys(self):
         if self.hotkey_listener: self.hotkey_listener.stop()
-        try:
-            self.hotkey_listener = keyboard.GlobalHotKeys({SETTINGS['hotkey_start']: self.on_hotkey_start, SETTINGS['hotkey_stop']: self.on_hotkey_stop})
-            self.hotkey_listener.start()
-        except Exception: pass
+        self.hotkey_listener = keyboard.GlobalHotKeys({SETTINGS['hotkey_start']: self.on_hotkey_start, SETTINGS['hotkey_stop']: self.on_hotkey_stop})
+        self.hotkey_listener.start()
     def stop_hotkeys(self):
         if self.hotkey_listener: self.hotkey_listener.stop(); self.hotkey_listener = None
     def on_hotkey_start(self):
@@ -1990,9 +1789,6 @@ class App(tk.Tk):
     def restart_ui(self): data = self.editor.get_data(); self._setup_ui(); self.editor.load_data(data)
 
     def toggle_run(self, start_id): 
-        # 强制保存所有输入：让编辑器获得焦点，触发 Entry 的 FocusOut
-        self.editor.focus_set()
-        
         if self.core.running: self.core.stop()
         else: self.btn_run.config(text="⏹ 停止", bg=COLORS['danger']); self.btn_pause.config(state='normal', text="⏸ 暂停", bg=COLORS['warning']); self.core.load_project(self.editor.get_data()); self.core.start(start_id)
     def toggle_pause(self): (self.core.resume() if self.core.paused else self.core.pause())
