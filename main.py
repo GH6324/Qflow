@@ -13,7 +13,7 @@ import ctypes
 import webbrowser
 import subprocess
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
+from tkinter import ttk, messagebox, filedialog
 from PIL import Image, ImageTk, ImageGrab, ImageChops
 import pyautogui
 from pynput import keyboard
@@ -129,8 +129,8 @@ FONTS = {
 }
 
 SETTINGS = {
-    'hotkey_start': '<alt>+1',
-    'hotkey_stop': '<alt>+2',
+    'hotkey_start': '<f9>',
+    'hotkey_stop': '<f10>',
     'theme': 'Dark'
 }
 
@@ -142,25 +142,25 @@ PORT_STEP_Y = int(24 * SCALE_FACTOR)
 GRID_SIZE = int(20 * SCALE_FACTOR)
 
 NODE_CONFIG = {
-    'start':    {'title': '▶ 开始', 'outputs': ['out'], 'color': '#2e7d32'},
-    'end':      {'title': '⏹️ 结束', 'outputs': [], 'color': '#c62828'},
-    'open_app': {'title': '🚀 打开程序', 'outputs': ['out', 'fail'], 'color': '#e65100'},
-    'bind_win': {'title': '⚓ 绑定窗口', 'outputs': ['success', 'fail'], 'color': '#00695c'},
-    'loop':     {'title': '🔄 循环', 'outputs': ['loop', 'exit'], 'color': '#7b1fa2'},
-    'wait':     {'title': '⏳ 延时', 'outputs': ['out'], 'color': '#4527a0'},
-    'mouse':    {'title': '👆 鼠标', 'outputs': ['out'], 'color': '#1565c0'},
-    'keyboard': {'title': '⌨️ 键盘', 'outputs': ['out'], 'color': '#1565c0'},
-    'notify':   {'title': '🔔 提示', 'outputs': ['out'], 'color': '#fdd835'},
-    'cmd':      {'title': '💻 命令', 'outputs': ['out'], 'color': '#1565c0'},
-    'web':      {'title': '🔗 网页', 'outputs': ['out'], 'color': '#0277bd'},
-    'image':    {'title': '🎯 找图', 'outputs': ['found', 'timeout'], 'color': '#ef6c00'},
-    'if_img':   {'title': '🔍 检测', 'outputs': ['yes', 'no'], 'color': '#ef6c00'},
-    'if_static':{'title': '⏸️ 静止', 'outputs': ['yes', 'no'], 'color': '#d84315'},
-    'if_sound': {'title': '🔊 声音', 'outputs': ['yes', 'no'], 'color': '#d84315'},
-    'set_var':  {'title': '[x] 变量', 'outputs': ['out'], 'color': '#00838f'},
-    'var_switch':{'title': '⎇ 分流', 'outputs': ['else'], 'color': '#00838f'},
-    'sequence': {'title': '🔀 序列', 'outputs': ['else'], 'color': '#7b1fa2'},
-    'reroute':  {'title': '●', 'outputs': ['out'], 'color': '#777777'}
+    'start':    {'title': '▶ 开始', 'outputs': ['out'], 'color': '#2e7d32', 'desc': '流程的起点'},
+    'end':      {'title': '⏹️ 结束', 'outputs': [], 'color': '#c62828', 'desc': '强制停止流程'},
+    'open_app': {'title': '🚀 打开程序', 'outputs': ['out', 'fail'], 'color': '#e65100', 'desc': '运行指定的可执行文件'},
+    'bind_win': {'title': '⚓ 绑定窗口', 'outputs': ['success', 'fail'], 'color': '#00695c', 'desc': '锁定特定窗口，后续坐标基于此窗口'},
+    'loop':     {'title': '🔄 循环', 'outputs': ['loop', 'exit'], 'color': '#7b1fa2', 'desc': '重复执行指定次数或无限循环'},
+    'wait':     {'title': '⏳ 延时', 'outputs': ['out'], 'color': '#4527a0', 'desc': '等待指定时间'},
+    'mouse':    {'title': '👆 鼠标', 'outputs': ['out'], 'color': '#1565c0', 'desc': '点击、移动、拖拽或滚动'},
+    'keyboard': {'title': '⌨️ 键盘', 'outputs': ['out'], 'color': '#1565c0', 'desc': '输入文本或按下组合键'},
+    'notify':   {'title': '🔔 提示', 'outputs': ['out'], 'color': '#fdd835', 'desc': '显示屏幕通知气泡'},
+    'cmd':      {'title': '💻 命令', 'outputs': ['out'], 'color': '#1565c0', 'desc': '执行系统CMD命令'},
+    'web':      {'title': '🔗 网页', 'outputs': ['out'], 'color': '#0277bd', 'desc': '打开指定的URL'},
+    'image':    {'title': '🎯 找图', 'outputs': ['found', 'timeout'], 'color': '#ef6c00', 'desc': '在屏幕上查找图片并操作'},
+    'if_img':   {'title': '🔍 检测', 'outputs': ['yes', 'no'], 'color': '#ef6c00', 'desc': '检测屏幕是否包含指定图像'},
+    'if_static':{'title': '⏸️ 静止', 'outputs': ['yes', 'no'], 'color': '#d84315', 'desc': '检测画面是否保持静止'},
+    'if_sound': {'title': '🔊 声音', 'outputs': ['yes', 'no'], 'color': '#d84315', 'desc': '检测是否有声音输出'},
+    'set_var':  {'title': '[x] 变量', 'outputs': ['out'], 'color': '#00838f', 'desc': '设置或修改内存变量'},
+    'var_switch':{'title': '⎇ 分流', 'outputs': ['else'], 'color': '#00838f', 'desc': '根据变量值选择不同路径'},
+    'sequence': {'title': '🔀 序列', 'outputs': ['else'], 'color': '#7b1fa2', 'desc': '按顺序尝试多条路径'},
+    'reroute':  {'title': '●', 'outputs': ['out'], 'color': '#777777', 'desc': '线路中继点'}
 }
 
 PORT_TRANSLATION = {'out': '继续', 'yes': '是', 'no': '否', 'found': '找到', 'timeout': '超时', 'loop': '循环', 'exit': '退出', 'else': '否则', 'success': '成功', 'fail': '失败'}
@@ -170,6 +170,31 @@ ACTION_MAP = {'click': '单击左键', 'double_click': '双击左键', 'right_cl
 MATCH_STRATEGY_MAP = {'hybrid': '智能混合', 'template': '模板匹配', 'feature': '特征匹配'}
 
 # --- 3. 基础工具类 ---
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind("<Enter>", self.show_tip)
+        self.widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        if self.tip_window or not self.text: return
+        x, y, _, _ = self.widget.bbox("insert") if self.widget.bbox("insert") else (0,0,0,0)
+        x = x + self.widget.winfo_rootx() + 25
+        y = y + self.widget.winfo_rooty() + 25
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(tw, text=self.text, justify='left',
+                         background="#ffffe0", relief='solid', borderwidth=1,
+                         font=("tahoma", "8", "normal"))
+        label.pack(ipadx=1)
+
+    def hide_tip(self, event=None):
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
 
 class KeyboardEngine:
     _controller = KeyboardController()
@@ -403,12 +428,17 @@ class VisionEngine:
         start_time = time.time()
         while True:
             if stop_event and stop_event.is_set(): return None
+            
+            # 捕获屏幕时需要考虑是否已有 region
             capture_bbox = (region[0], region[1], region[0] + region[2], region[1] + region[3]) if region else None
             haystack = VisionEngine.capture_screen(bbox=capture_bbox)
+            
             if haystack is None:
                 time.sleep(0.5) 
-                if timeout > 0 and time.time()-start_time>=timeout: break
+                # [修复]：增加 timeout <= 0 的判断，防止死循环
+                if timeout <= 0 or (time.time()-start_time >= timeout): break
                 continue
+            
             try:
                 result, _ = VisionEngine._advanced_match(needle, haystack, confidence, stop_event, grayscale, multiscale, scaling_ratio, strategy)
                 if result:
@@ -416,7 +446,10 @@ class VisionEngine:
                     offset_y = region[1] if region else 0
                     return Box(result.left + offset_x, result.top + offset_y, result.width, result.height)
             except Exception: pass
-            if timeout > 0 and time.time()-start_time>=timeout: break
+            
+            # [修复]：修改退出条件。如果 timeout 为 0（单次查找），或者时间耗尽，则退出
+            if timeout <= 0 or (time.time()-start_time >= timeout): break
+            
             time.sleep(0.1)
         return None
 
@@ -426,9 +459,17 @@ class VisionEngine:
         if needle.width > haystack.width or needle.height > haystack.height: return None, 0.0
         if HAS_OPENCV:
             try:
-                if grayscale: nA, hA = cv2.cvtColor(np.array(needle), cv2.COLOR_RGB2GRAY), cv2.cvtColor(np.array(haystack), cv2.COLOR_RGB2GRAY)
-                else: nA, hA = cv2.cvtColor(np.array(needle), cv2.COLOR_RGB2BGR), cv2.cvtColor(np.array(haystack), cv2.COLOR_RGB2BGR)
-                if strategy == 'feature': return VisionEngine._feature_match_akaze(nA, hA)
+                # 修复BUG 5: 特征匹配通常需要更多细节，强制灰度可能丢失信息，但 OpenCV 算法一般内部转灰度。
+                if grayscale: 
+                    nA = cv2.cvtColor(np.array(needle), cv2.COLOR_RGB2GRAY)
+                    hA = cv2.cvtColor(np.array(haystack), cv2.COLOR_RGB2GRAY)
+                else: 
+                    nA = cv2.cvtColor(np.array(needle), cv2.COLOR_RGB2BGR)
+                    hA = cv2.cvtColor(np.array(haystack), cv2.COLOR_RGB2BGR)
+                
+                if strategy == 'feature': 
+                    return VisionEngine._feature_match_akaze(nA, hA)
+                
                 nH, nW = nA.shape[:2]; hH, hW = hA.shape[:2]; scales = [1.0]
                 if multiscale: scales = np.unique(np.append(np.linspace(scaling_ratio * 0.8, scaling_ratio * 1.2, 10), [1.0, scaling_ratio]))
                 best_max, best_rect = -1, None
@@ -443,6 +484,7 @@ class VisionEngine:
                 if best_rect and best_max >= confidence: return best_rect, best_max
             except Exception: pass
         try:
+            # PyAutoGUI fallback
             res = pyautogui.locate(needle, haystack, confidence=confidence, grayscale=grayscale)
             if res: return Box(res.left, res.top, res.width, res.height), 1.0
         except: pass
@@ -466,7 +508,8 @@ class VisionEngine:
                     dst = cv2.perspectiveTransform(pts, M)
                     x_min, y_min = np.min(dst[:, :, 0]), np.min(dst[:, :, 1])
                     x_max, y_max = np.max(dst[:, :, 0]), np.max(dst[:, :, 1])
-                    return Box(int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min)), min(1.0, len(good)/len(kp1)*2.5)
+                    # 确保坐标非负
+                    return Box(max(0, int(x_min)), max(0, int(y_min)), int(x_max - x_min), int(y_max - y_min)), min(1.0, len(good)/len(kp1)*2.5)
             return None, 0.0
         except: return None, 0.0
     
@@ -644,6 +687,16 @@ class AutomationCore:
                     self.context = {'window_rect': None, 'window_handle': 0, 'window_offset': (0, 0)}
             except Exception as e:
                 self.context = {'window_rect': None, 'window_handle': 0, 'window_offset': (0, 0)}
+    
+    def _ensure_window_focus(self):
+        """强制聚焦绑定的窗口，确保操作不偏移"""
+        if self.context['window_handle']:
+            try:
+                # 检查窗口是否最小化或被覆盖，尝试置顶
+                WindowEngine.focus_window(self.context['window_handle'])
+                self._update_context_rect()
+                time.sleep(0.05) # 给窗口弹出的时间
+            except: pass
 
     def _execute_node(self, node):
         if self.stop_event.is_set(): return '__STOP__'
@@ -750,6 +803,7 @@ class AutomationCore:
             return 'yes' if found else 'no'
 
         if ntype == 'if_static':
+            self._ensure_window_focus()
             roi = data.get('roi') # 存储格式为 (x, y, w, h)
             if not roi: return 'no'
             duration = safe_float(data.get('duration', 5.0))
@@ -776,13 +830,14 @@ class AutomationCore:
             return 'no'
 
         if ntype == 'image':
-            conf, timeout = safe_float(data.get('confidence', 0.9)), max(0.5, safe_float(data.get('timeout', 10.0)))
+            self._ensure_window_focus()
+            conf, timeout_val = safe_float(data.get('confidence', 0.9)), max(0.5, safe_float(data.get('timeout', 10.0)))
             search_region = win_region if win_region else None
             if (anchors := data.get('anchors', [])):
                 primary_res = None
                 for i, anchor in enumerate(anchors):
                     if self.stop_event.is_set(): return '__STOP__'
-                    res = VisionEngine.locate(anchor['image'], confidence=conf, timeout=(timeout if i==0 else 2.0), stop_event=self.stop_event, strategy=data.get('match_strategy','hybrid'), region=search_region)
+                    res = VisionEngine.locate(anchor['image'], confidence=conf, timeout=(timeout_val if i==0 else 2.0), stop_event=self.stop_event, strategy=data.get('match_strategy','hybrid'), region=search_region)
                     if not res: return 'timeout'
                     if i == 0: primary_res = res
                 if primary_res:
@@ -790,6 +845,8 @@ class AutomationCore:
                     search_region = (max(0, int(primary_res.left+off_x)-15), max(0, int(primary_res.top+off_y)-15), safe_int(data.get('target_rect_w',100))+30, safe_int(data.get('target_rect_h',100))+30)
 
             start_time = time.time()
+            auto_scroll = bool(data.get('auto_scroll', False))
+            
             while True:
                 if self.stop_event.is_set(): return '__STOP__'
                 self._check_pause()
@@ -806,15 +863,23 @@ class AutomationCore:
                             getattr(pyautogui, {'click':'click','double_click':'doubleClick','right_click':'rightClick'}.get(act, 'click'))()
                     return 'found'
                 
-                if bool(data.get('auto_scroll', False)):
-                     with self.io_lock: pyautogui.scroll(safe_int(data.get('scroll_amount', -500)))
-                     if not self._smart_wait(0.8): return '__STOP__'
+                if time.time() - start_time > timeout_val:
+                    break
+                
+                if auto_scroll:
+                     with self.io_lock: 
+                         if win_region:
+                            cx = win_region[0] + win_region[2] // 2
+                            cy = win_region[1] + win_region[3] // 2
+                            pyautogui.moveTo(cx, cy)
+                         pyautogui.scroll(safe_int(data.get('scroll_amount', -500)))
+                     time.sleep(0.5)
 
-                if time.time() - start_time > timeout: break
                 time.sleep(0.2)
             return 'timeout'
 
         if ntype == 'mouse':
+            self._ensure_window_focus()
             with self.io_lock:
                 action = data.get('mouse_action', 'click')
                 dur = safe_float(data.get('duration', 0.5))
@@ -825,8 +890,6 @@ class AutomationCore:
                     end_x = safe_int(data.get('end_x', 0))
                     end_y = safe_int(data.get('end_y', 0))
                     
-                    # 坐标转换：偏移 + 虚拟屏幕修正 (如果需要，但win_offset已经是绝对)
-                    # 假设 win_offset 是基于主屏左上角的绝对坐标
                     start_x_screen = start_x + win_offset_x
                     start_y_screen = start_y + win_offset_y
                     end_x_screen = end_x + win_offset_x
@@ -834,6 +897,10 @@ class AutomationCore:
                     
                     pyautogui.moveTo(start_x_screen, start_y_screen, duration=0.1)
                     pyautogui.dragTo(end_x_screen, end_y_screen, button='left', duration=dur)
+                
+                elif action == 'scroll':
+                     pyautogui.scroll(safe_int(data.get('scroll_amount', -500)))
+
                 else:
                     raw_x, raw_y = safe_int(data.get('x',0)), safe_int(data.get('y',0))
                     target_x = raw_x + win_offset_x
@@ -845,11 +912,10 @@ class AutomationCore:
                         pyautogui.doubleClick(x=target_x, y=target_y, duration=dur, interval=0.1)
                     elif action == 'move': 
                         pyautogui.moveTo(target_x, target_y, duration=dur)
-                    elif action == 'scroll': 
-                        pyautogui.scroll(safe_int(data.get('amount', -500)))
             return 'out'
         
         if ntype == 'keyboard':
+            self._ensure_window_focus()
             with self.io_lock:
                 if data.get('kb_mode', 'text') == 'text':
                     text = data.get('text','')
@@ -875,6 +941,7 @@ class AutomationCore:
                     if k in self.runtime_memory: del self.runtime_memory[k]
                     return 'exit'
         if ntype == 'if_img':
+            self._ensure_window_focus()
             if not (imgs := data.get('images', [])): return 'no'
             capture_bbox = win_region if win_region else None
             hay = VisionEngine.capture_screen(bbox=capture_bbox)
@@ -1097,10 +1164,8 @@ class GraphNode:
         self.canvas.history.save_state()
         self.data[key] = value
         if key in ['cases', 'var_name', 'image', 'images', 'roi_preview', 'path', 'exe_name', 'class_name', 'title']: self.draw() 
-        # 修复：不再盲目重新加载属性面板，防止输入焦点丢失
-        # 仅当当前选中的就是自己时，才考虑是否需要刷新（实际上大多数简单输入不需要刷新）
-        # if self.canvas.app.property_panel.current_node == self: 
-        #    self.canvas.app.property_panel.load_node(self)
+        if self.canvas.app.property_panel.current_node == self: 
+           self.canvas.app.property_panel.load_node(self)
 
     def set_sensor_active(self, is_active): self.canvas.itemconfig(self.body_item, outline=COLORS['active_border'] if is_active else COLORS['bg_node'])
     def get_input_port_y(self, visual=False): 
@@ -1370,7 +1435,13 @@ class PropertyPanel(tk.Frame):
             except: pass
         self.current_node = None; self.static_monitor_active = False; self.is_monitoring_audio = False
 
-    def show_empty(self): self.clear(); tk.Label(self.content, text="未选择节点", bg=COLORS['bg_panel'], fg=COLORS['fg_sub'], font=('Microsoft YaHei', int(8 * SCALE_FACTOR))).pack(pady=40)
+    def show_empty(self): 
+        self.clear(); 
+        info_frame = tk.Frame(self.content, bg=COLORS['bg_panel'])
+        info_frame.pack(fill='both', expand=True, pady=40)
+        tk.Label(info_frame, text="未选择节点", bg=COLORS['bg_panel'], fg=COLORS['fg_sub'], font=('Microsoft YaHei', 10, 'bold')).pack()
+        tk.Label(info_frame, text="请在画布中点击节点以配置属性", bg=COLORS['bg_panel'], fg=COLORS['fg_sub'], font=('Microsoft YaHei', 8)).pack(pady=5)
+        
     def show_multi_select(self, count): self.clear(); tk.Label(self.content, text=f"选中 {count} 个节点", bg=COLORS['bg_panel'], fg=COLORS['accent']).pack(pady=40)
 
     def load_node(self, node):
@@ -1427,25 +1498,26 @@ class PropertyPanel(tk.Frame):
         elif ntype == 'mouse':
             sec = self._create_section("鼠标操作")
             
-            # 使用闭包保存数据，并显式重载（因为改变动作会改变UI布局）
             def on_action_change(e):
                 val = {v:k for k,v in MOUSE_ACTIONS.items()}.get(e.widget.get())
                 self._save('mouse_action', val, self.current_node)
                 self.load_node(self.current_node)
 
-            self._combo(sec, "动作", 'mouse_action', list(MOUSE_ACTIONS.values()), MOUSE_ACTIONS.get(data.get('mouse_action', 'click'), '点击'), on_action_change)
+            curr_action = data.get('mouse_action', 'click')
+            self._combo(sec, "动作", 'mouse_action', list(MOUSE_ACTIONS.values()), MOUSE_ACTIONS.get(curr_action, '点击'), on_action_change)
             
-            if data.get('mouse_action','click') in ['click', 'double_click']:
+            if curr_action == 'click':
                 self._combo(sec, "按键", 'mouse_button', list(MOUSE_BUTTONS.values()), MOUSE_BUTTONS.get(data.get('mouse_button', 'left')), lambda e: self._save('mouse_button', {v:k for k,v in MOUSE_BUTTONS.items()}.get(e.widget.get()), self.current_node))
-                if data.get('mouse_action') == 'click':
-                    self._combo(sec, "次数", 'click_count', ['单击','双击'], '单击' if str(data.get('click_count',1))=='1' else '双击', lambda e: self._save('click_count', 1 if e.widget.get()=='单击' else 2, self.current_node))
-            
-            if data.get('mouse_action') in ['click', 'move', 'double_click']:
+                self._combo(sec, "次数", 'click_count', ['单击','双击'], '单击' if str(data.get('click_count',1))=='1' else '双击', lambda e: self._save('click_count', 1 if e.widget.get()=='单击' else 2, self.current_node))
+            elif curr_action == 'double_click':
+                tk.Label(sec, text="ℹ️ 执行左键双击", bg=sec.cget('bg'), fg=COLORS['fg_sub']).pack(anchor='w')
+
+            if curr_action in ['click', 'move', 'double_click']:
                 coord = tk.Frame(sec, bg=sec.cget('bg')); coord.pack(fill='x', pady=5)
                 self._compact_input(coord, "X", 'x', data.get('x', 0), safe_int)
                 self._compact_input(coord, "Y", 'y', data.get('y', 0), safe_int)
                 self._btn_icon(coord, "📍", self.app.pick_coordinate, width=3)
-            elif data.get('mouse_action') == 'drag':
+            elif curr_action == 'drag':
                 start_coord = tk.Frame(sec, bg=sec.cget('bg')); start_coord.pack(fill='x', pady=5)
                 tk.Label(start_coord, text="起始坐标:", bg=sec.cget('bg'), fg=COLORS['accent'], font=('Microsoft YaHei', int(9 * SCALE_FACTOR))).pack(anchor='w', pady=(5,0))
                 start_input = tk.Frame(start_coord, bg=sec.cget('bg')); start_input.pack(fill='x', pady=2)
@@ -1458,7 +1530,11 @@ class PropertyPanel(tk.Frame):
                 self._compact_input(end_input, "X", 'end_x', data.get('end_x', 0), safe_int)
                 self._compact_input(end_input, "Y", 'end_y', data.get('end_y', 0), safe_int)
                 self._btn_icon(end_input, "📍", self.app.pick_end_coordinate, width=3)
-        
+            
+            elif curr_action == 'scroll':
+                scroll_f = tk.Frame(sec, bg=sec.cget('bg')); scroll_f.pack(fill='x', pady=5)
+                self._input(scroll_f, "滚动量(负数向下)", 'scroll_amount', data.get('scroll_amount', -500), safe_int)
+
         elif ntype == 'keyboard':
             sec = self._create_section("键盘操作")
             
@@ -1685,6 +1761,7 @@ class PropertyPanel(tk.Frame):
     def open_visual_offset_picker(self):
         self.app.iconify(); time.sleep(0.3); full_screen = ImageGrab.grab(all_screens=True, bbox=(VX, VY, VX+VW, VY+VH))
         try:
+            # 视觉测试时需注意窗口聚焦，但在偏移调整时主要用全屏截图
             res = VisionEngine.locate(self.current_node.data.get('image'), confidence=0.8, timeout=1.0)
             if not res: self.app.deiconify(); messagebox.showerror("错误", "未在屏幕找到基准图"); return
             top = tk.Toplevel(self.app)
@@ -1718,7 +1795,8 @@ class PropertyPanel(tk.Frame):
                     if not VisionEngine._advanced_match(img.get('image'), screen, 0.8, None, True, True, 1.0, 'hybrid')[0]: passed = False; break
                 res_txt = "✅ 全部满足" if passed else "❌ 条件不满足"
             else:
-                 res = VisionEngine.locate(self.current_node.data.get('image'), confidence=0.8)
+                 strategy = self.current_node.data.get('match_strategy', 'hybrid')
+                 res = VisionEngine.locate(self.current_node.data.get('image'), confidence=0.8, strategy=strategy)
                  res_txt = "✅ 找到" if res else "❌ 未找到"
         except: pass
         self.app.deiconify(); messagebox.showinfo("测试结果", res_txt)
@@ -1789,7 +1867,7 @@ class SettingsDialog(tk.Toplevel):
         self.combo_theme = ttk.Combobox(f_theme, values=list(THEMES.keys()), state='readonly'); self.combo_theme.set(SETTINGS.get('theme', 'Dark')); self.combo_theme.pack(side='right', fill='x', expand=True, padx=10)
 
         f_hk = tk.Frame(self, bg=COLORS['bg_panel'], pady=10, padx=20); f_hk.pack(fill='x')
-        self.hk_vars = {'start': tk.StringVar(value=SETTINGS.get('hotkey_start', '<alt>+1')), 'stop': tk.StringVar(value=SETTINGS.get('hotkey_stop', '<alt>+2'))}
+        self.hk_vars = {'start': tk.StringVar(value=SETTINGS.get('hotkey_start', '<f9>')), 'stop': tk.StringVar(value=SETTINGS.get('hotkey_stop', '<f10>'))}
         self._create_hotkey_entry(f_hk, "启动快捷键:", 'start', 0)
         self._create_hotkey_entry(f_hk, "停止快捷键:", 'stop', 1)
         f_hk.columnconfigure(1, weight=1)
@@ -1807,14 +1885,23 @@ class SettingsDialog(tk.Toplevel):
         e.bind("<Button-3>", lambda ev: self.hk_vars[key].set("")) 
 
     def _on_key(self, event, key):
-        if event.keysym in ['Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R']: return 
+        if event.keysym in ['Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Win_L', 'Win_R']: return 
         if event.keysym == 'Escape': self.hk_vars[key].set(""); self.focus_set(); return "break"
+        
         parts = []
         if event.state & 0x0004: parts.append("<ctrl>")
         if event.state & 0x20000 or event.state & 0x0008: parts.append("<alt>") 
         if event.state & 0x0001: parts.append("<shift>")
-        char = event.keysym.lower()
-        if char not in ['control_l', 'control_r', 'alt_l', 'alt_r', 'shift_l', 'shift_r']: parts.append(char)
+        
+        sym = event.keysym.lower()
+        if len(sym) > 1 and sym.startswith('f') and sym[1:].isdigit():
+            sym = f"<{sym}>"
+        elif sym.startswith('kp_'):
+            if sym == 'kp_enter': sym = '<enter>'
+            elif sym.replace('kp_', '').isdigit(): sym = sym.replace('kp_', '') 
+            else: sym = f"<{sym}>"
+        
+        parts.append(sym)
         self.hk_vars[key].set("+".join(parts)); return "break" 
     
     def on_cancel(self): self.app.refresh_hotkeys(); self.destroy()
@@ -1825,7 +1912,7 @@ class SettingsDialog(tk.Toplevel):
 # --- 8. 主程序 ---
 class App(tk.Tk):
     def __init__(self):
-        super().__init__(); self.title("Qflow 1.7.0 - QwejayHuang"); self.geometry("1400x1100")
+        super().__init__(); self.title("Qflow 1.7.1 - QwejayHuang"); self.geometry("1400x1100")
         try:
             if hasattr(sys, '_MEIPASS'):
                 icon_path = os.path.join(sys._MEIPASS, 'icon.ico')
@@ -1846,7 +1933,7 @@ class App(tk.Tk):
         for widget in self.winfo_children(): widget.destroy()
 
         title_bar = tk.Frame(self, bg=COLORS['bg_app'], height=50); title_bar.pack(fill='x', pady=5, padx=20)
-        tk.Label(title_bar, text="QFLOW 1.7", font=('Impact', 24), bg=COLORS['bg_app'], fg=COLORS['accent']).pack(side='left', padx=(0, 20))
+        tk.Label(title_bar, text="QFLOW 1.7.1", font=('Impact', 24), bg=COLORS['bg_app'], fg=COLORS['accent']).pack(side='left', padx=(0, 20))
         
         ops = tk.Frame(title_bar, bg=COLORS['bg_app']); ops.pack(side='left')
         for txt, cmd in [("📂 打开", self.load), ("💾 保存", self.save), ("🗑️ 清空", self.clear), ("⚙️ 设置", self.open_settings)]:
@@ -1877,6 +1964,7 @@ class App(tk.Tk):
                 tk.Frame(f, bg=NODE_CONFIG[t]['color'], width=4).pack(side='left', fill='y')
                 l = tk.Label(f, text=NODE_CONFIG[t]['title'], bg=COLORS['bg_card'], fg=COLORS['fg_text'], anchor='w', padx=8, pady=6)
                 l.pack(side='left', fill='both', expand=True)
+                if 'desc' in NODE_CONFIG[t]: ToolTip(l, NODE_CONFIG[t]['desc'])
                 for w in [f, l]: w.bind("<ButtonPress-1>", lambda e, t=t: self.on_drag_start(e, t)); w.bind("<B1-Motion>", self.on_drag_move); w.bind("<ButtonRelease-1>", self.on_drag_end)
 
     def on_drag_start(self,e,t): self.drag_node_type=t; self.drag_ghost=tk.Toplevel(self); self.drag_ghost.overrideredirect(True); self.drag_ghost.attributes("-alpha",0.7); tk.Label(self.drag_ghost,text=NODE_CONFIG[t]['title'],bg=COLORS['accent']).pack()
