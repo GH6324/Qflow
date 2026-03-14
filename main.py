@@ -521,26 +521,29 @@ class VisionEngine:
 class LogPanel(tk.Frame):
     def __init__(self, parent, **kwargs):
         super().__init__(parent, bg=COLORS['bg_panel'], **kwargs)
-        self.height_expanded, self.height_collapsed = 200, 30
-        self.expanded = False
-        self.toolbar = tk.Frame(self, bg=COLORS['bg_header'], height=28); self.toolbar.pack_propagate(False); self.toolbar.pack(fill='x')
+        self.toolbar = tk.Frame(self, bg=COLORS['bg_header'], height=28)
+        self.toolbar.pack_propagate(False); self.toolbar.pack(fill='x')
         tk.Label(self.toolbar, text="📋 执行日志", bg=COLORS['bg_header'], fg='white', font=FONTS['node_title']).pack(side='left', padx=10)
         tk.Button(self.toolbar, text="🗑️", command=self.clear, bg=COLORS['bg_header'], fg=COLORS['danger'], bd=0).pack(side='right', padx=5)
         
         self.text_frame = tk.Frame(self, bg=COLORS['log_bg'])
         self.scrollbar = ttk.Scrollbar(self.text_frame)
         self.text_area = tk.Text(self.text_frame, bg=COLORS['log_bg'], fg=COLORS['log_fg'], font=FONTS['log'], state='disabled', yscrollcommand=self.scrollbar.set, bd=0, padx=5, pady=5)
-        self.scrollbar.config(command=self.text_area.yview); self.scrollbar.pack(side='right', fill='y'); self.text_area.pack(side='left', fill='both', expand=True)
+        self.scrollbar.config(command=self.text_area.yview)
+        self.scrollbar.pack(side='right', fill='y')
+        self.text_area.pack(side='left', fill='both', expand=True)
         for level, style in LOG_LEVELS.items(): self.text_area.tag_config(level, foreground=style['color'])
-        self.pack(side='bottom', fill='x')
-        self.config(height=self.height_expanded); self.text_frame.pack(fill='both', expand=True)
+        
+        self.text_frame.pack(fill='both', expand=True)
 
     def add_log(self, msg, level='info'):
         if not self.winfo_exists(): return
         self.text_area.config(state='normal')
         self.text_area.insert('end', f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n", level)
         self.text_area.see('end'); self.text_area.config(state='disabled')
-    def clear(self): self.text_area.config(state='normal'); self.text_area.delete(1.0, 'end'); self.text_area.config(state='disabled')
+        
+    def clear(self): 
+        self.text_area.config(state='normal'); self.text_area.delete(1.0, 'end'); self.text_area.config(state='disabled')
 
 class AutomationCore:
     def __init__(self, log_callback, app_instance):
@@ -831,6 +834,17 @@ class AutomationCore:
             last_frame = VisionEngine.capture_screen(bbox=target_bbox)
             while time.time() - start_check < timeout:
                 if self.stop_event.is_set(): return '__STOP__'
+                
+                if self.context['window_handle']:
+                    fg_hwnd = user32.GetForegroundWindow()
+                    if fg_hwnd != self.context['window_handle']:
+                        self.log("⚠️ 窗口失去焦点或被遮挡，拉回前台并重置静止计时...", "warning")
+                        self._ensure_window_focus()
+                        time.sleep(0.3)
+                        static_start = time.time()
+                        last_frame = VisionEngine.capture_screen(bbox=target_bbox)
+                        continue
+                
                 curr_frame = VisionEngine.capture_screen(bbox=target_bbox)
                 is_static = VisionEngine.compare_images(last_frame, curr_frame, threshold)
                 if is_static:
@@ -1930,7 +1944,6 @@ class SettingsDialog(tk.Toplevel):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        # [修复] 增加当前文件状态追踪
         self.current_file_path = None
         self.geometry("1400x1100")
         try:
@@ -1947,7 +1960,6 @@ class App(tk.Tk):
         self.hotkey_listener = None
         self._setup_ui(); self.refresh_hotkeys()
         
-        # 绑定直接保存快捷键
         self.bind("<Control-s>", lambda e: self.save())
         
         self.update_title()
@@ -1955,48 +1967,85 @@ class App(tk.Tk):
 
     def update_title(self):
         filename = os.path.basename(self.current_file_path) if self.current_file_path else "未命名"
-        self.title(f"Qflow 1.7.2 - QwejayHuang - {filename}")
+        self.title(f"Qflow 1.7.3 - QwejayHuang - {filename}")
 
     def _setup_ui(self):
         self.configure(bg=COLORS['bg_app'])
         for widget in self.winfo_children(): widget.destroy()
 
         title_bar = tk.Frame(self, bg=COLORS['bg_app'], height=50); title_bar.pack(fill='x', pady=5, padx=20)
-        tk.Label(title_bar, text="QFLOW 1.7.2", font=('Impact', 24), bg=COLORS['bg_app'], fg=COLORS['accent']).pack(side='left', padx=(0, 20))
+        tk.Label(title_bar, text="QFLOW 1.7.3", font=('Impact', 24), bg=COLORS['bg_app'], fg=COLORS['accent']).pack(side='left', padx=(0, 20))
         
         ops = tk.Frame(title_bar, bg=COLORS['bg_app']); ops.pack(side='left')
-        # [修复] 增加了另存为按钮
         for txt, cmd in [("📂 打开", self.load), ("💾 保存", self.save), ("📝 另存", self.save_as), ("🗑️ 清空", self.clear), ("⚙️ 设置", self.open_settings)]:
             tk.Button(ops, text=txt, command=cmd, bg=COLORS['bg_header'], fg='white', bd=0, padx=10, cursor='hand2', font=('Microsoft YaHei', 9)).pack(side='left', padx=2)
             
         self.btn_run = tk.Button(title_bar, text="▶ 启动", command=lambda: self.toggle_run(None), bg=COLORS['success'], fg='#1f1f1f', font=('Microsoft YaHei', 11, 'bold'), padx=15, bd=0, cursor='hand2'); self.btn_run.pack(side='right')
         self.btn_pause = tk.Button(title_bar, text="⏸ 暂停", command=self.toggle_pause, bg=COLORS['warning'], fg='#1f1f1f', bd=0, padx=10, state='disabled', cursor='hand2', font=('Microsoft YaHei', 9)); self.btn_pause.pack(side='right', padx=10)
         
-        paned = tk.PanedWindow(self, orient='horizontal', bg=COLORS['bg_app'], sashwidth=4, bd=0); paned.pack(fill='both', expand=True, padx=10, pady=(0, 5))
-        toolbox = tk.Frame(paned, bg=COLORS['bg_sidebar']); self._build_toolbox(toolbox); paned.add(toolbox, minsize=160, width=180)
-        self.editor = FlowEditor(paned, self); paned.add(self.editor, minsize=400, stretch="always")
-        self.property_panel = PropertyPanel(paned, self); paned.add(self.property_panel, minsize=280, width=180)
-        self.log_panel = LogPanel(self)
+        self.main_paned = tk.PanedWindow(self, orient='vertical', bg=COLORS['bg_app'], sashwidth=4, bd=0)
+        self.main_paned.pack(fill='both', expand=True, padx=10, pady=(0, 5))
+        
+        h_paned = tk.PanedWindow(self.main_paned, orient='horizontal', bg=COLORS['bg_app'], sashwidth=4, bd=0)
+        self.main_paned.add(h_paned, stretch="always")
+        
+        toolbox = tk.Frame(h_paned, bg=COLORS['bg_sidebar'])
+        self._build_toolbox(toolbox)
+        h_paned.add(toolbox, minsize=160, width=180)
+        
+        self.editor = FlowEditor(h_paned, self); h_paned.add(self.editor, minsize=400, stretch="always")
+        self.property_panel = PropertyPanel(h_paned, self); h_paned.add(self.property_panel, minsize=280, width=180)
+        
+        self.log_panel = LogPanel(self.main_paned)
+        self.main_paned.add(self.log_panel, minsize=80, height=200)
+        
         self.editor.add_node('start', 100, 100, save_history=False)
 
     def _build_toolbox(self, p):
-        # [修复] 在逻辑组件中加入了clipboard
+        canvas = tk.Canvas(p, bg=COLORS['bg_sidebar'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(p, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        content = tk.Frame(canvas, bg=COLORS['bg_sidebar'])
+        content.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=content, anchor="nw", tags="inner")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig("inner", width=e.width))
+        
+        canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+        def _bind_mousewheel(widget):
+            widget.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        content.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
         tool_groups = [
             ("应用控制", ['open_app', 'bind_win', 'cmd', 'web']),
             ("逻辑组件", ['start', 'end', 'loop', 'sequence', 'set_var', 'var_switch', 'clipboard', 'notify']),
             ("动作执行", ['mouse', 'keyboard', 'wait']),
             ("视觉/感知", ['image', 'if_img', 'if_static', 'if_sound'])
         ]
+        
         for title, items in tool_groups:
-            tk.Label(p, text=title, bg=COLORS['bg_sidebar'], fg=COLORS['fg_sub'], font=('Microsoft YaHei', 9, 'bold'), pady=8).pack(anchor='w', padx=10)
+            lbl = tk.Label(content, text=title, bg=COLORS['bg_sidebar'], fg=COLORS['fg_sub'], font=('Microsoft YaHei', 9, 'bold'), pady=8)
+            lbl.pack(anchor='w', padx=10)
+            _bind_mousewheel(lbl)
             for t in items:
                 if t not in NODE_CONFIG: continue
-                f = tk.Frame(p, bg=COLORS['bg_card'], cursor="hand2", pady=2); f.pack(fill='x', pady=1, padx=8)
+                f = tk.Frame(content, bg=COLORS['bg_card'], cursor="hand2", pady=2)
+                f.pack(fill='x', pady=1, padx=8)
                 tk.Frame(f, bg=NODE_CONFIG[t]['color'], width=4).pack(side='left', fill='y')
                 l = tk.Label(f, text=NODE_CONFIG[t]['title'], bg=COLORS['bg_card'], fg=COLORS['fg_text'], font=('Microsoft YaHei', 9), anchor='w', padx=8, pady=6)
                 l.pack(side='left', fill='both', expand=True)
+                
                 if 'desc' in NODE_CONFIG[t]: ToolTip(l, NODE_CONFIG[t]['desc'])
-                for w in [f, l]: w.bind("<ButtonPress-1>", lambda e, t=t: self.on_drag_start(e, t)); w.bind("<B1-Motion>", self.on_drag_move); w.bind("<ButtonRelease-1>", self.on_drag_end)
+                
+                _bind_mousewheel(f); _bind_mousewheel(l)
+                
+                for w in [f, l]: 
+                    w.bind("<ButtonPress-1>", lambda e, t=t: self.on_drag_start(e, t))
+                    w.bind("<B1-Motion>", self.on_drag_move)
+                    w.bind("<ButtonRelease-1>", self.on_drag_end)
 
     def on_drag_start(self,e,t): self.drag_node_type=t; self.drag_ghost=tk.Toplevel(self); self.drag_ghost.overrideredirect(True); self.drag_ghost.attributes("-alpha",0.7); tk.Label(self.drag_ghost,text=NODE_CONFIG[t]['title'],bg=COLORS['accent'], font=('Microsoft YaHei', 9)).pack()
     def on_drag_move(self,e): (self.drag_ghost and self.drag_ghost.geometry(f"+{e.x_root+10}+{e.y_root+10}"))
