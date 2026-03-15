@@ -10,6 +10,7 @@ import io
 import math
 import uuid
 import ctypes
+from ctypes import wintypes
 import webbrowser
 import subprocess
 import tkinter as tk
@@ -135,7 +136,14 @@ SETTINGS = {
     'theme': 'Dark'
 }
 
-LOG_LEVELS = {'info': {'color': '#64b5f6'}, 'success': {'color': '#81c784'}, 'warning': {'color': '#ffd54f'}, 'error': {'color': '#e57373'}, 'exec': {'color': '#9e9e9e'}, 'paused': {'color': '#fff176'}}
+LOG_LEVELS = {
+    'info': {'color': '#64b5f6'},      # 蓝色：普通引导
+    'success': {'color': '#81c784'},   # 绿色：重要操作
+    'warning': {'color': '#ffd54f'},   # 黄色：提示建议
+    'error': {'color': '#e57373'},     # 红色：错误
+    'exec': {'color': '#666666'},      # 灰色：装饰线
+    'paused': {'color': '#fff176'}     # 亮黄：暂停
+}
 NODE_WIDTH = int(200 * SCALE_FACTOR)
 HEADER_HEIGHT = int(28 * SCALE_FACTOR)
 PORT_START_Y = int(45 * SCALE_FACTOR)
@@ -716,7 +724,7 @@ class AutomationCore:
             msg = data.get('msg', '执行到此节点')
             use_sound = bool(data.get('use_sound', False))
             duration = safe_int(safe_float(data.get('duration', 2.0)) * 1000)
-            VisualTips.show_toast(msg, duration, use_sound)
+            self.app.after(0, lambda: VisualTips.show_toast(msg, duration, use_sound))
             return 'out'
 
         if ntype == 'open_app':
@@ -792,8 +800,9 @@ class AutomationCore:
                 if self.stop_event.is_set(): return '__STOP__'
                 target_id = (self._get_next_links(node['id'], str(i)) or [None])[0]
                 if not target_id: continue
-                if self._execute_node(self.project['nodes'][target_id]) in ['yes', 'found', 'out', 'loop', 'success']:
-                    res_port = self._execute_node(self.project['nodes'][target_id])
+        
+                res_port = self._execute_node(self.project['nodes'][target_id])
+                if res_port in ['yes', 'found', 'out', 'loop', 'success']:
                     next_nodes = self._get_next_links(target_id, res_port)
                     for nid in next_nodes: self._fork_node(nid)
                     return '__STOP__' 
@@ -966,7 +975,12 @@ class AutomationCore:
         if ntype == 'if_img':
             self._ensure_window_focus()
             if not (imgs := data.get('images', [])): return 'no'
-            capture_bbox = win_region if win_region else None
+    
+            if win_region:
+                capture_bbox = (win_region.left, win_region.top, win_region.left + win_region.width, win_region.top + win_region.height)
+            else:
+                capture_bbox = None
+        
             hay = VisionEngine.capture_screen(bbox=capture_bbox)
             for img in imgs:
                 if not VisionEngine._advanced_match(img.get('image'), hay, safe_float(data.get('confidence',0.9)), self.stop_event, True, True, self.scaling_ratio, 'hybrid')[0]: return 'no'
@@ -1179,10 +1193,16 @@ class GraphNode:
         elif self.type == 'mouse': create_combo('mouse_action', MOUSE_ACTIONS, 'click', width=12)
 
     def clear_widgets(self):
-        for w in self.widgets: self.canvas.delete(w)
+        for w in self.widgets:
+            widget_name = self.canvas.itemcget(w, 'window')
+            if widget_name:
+                try:
+                    self.canvas.nametowidget(widget_name).destroy()
+                except Exception:
+                    pass
+            self.canvas.delete(w)
         self.widgets.clear()
 
-    # [修复] 控制 UI 刷新避免输入打断
     def update_data(self, key, value, refresh_ui=True):
         if str(self.data.get(key)) == str(value): return
         if refresh_ui: self.canvas.history.save_state()
@@ -1867,7 +1887,7 @@ class PropertyPanel(tk.Frame):
             if self.lbl_monitor_status.winfo_exists():
                 txt = f"{'🟢 静止' if is_static else '🌊 运动'} | {elapsed:.1f}s / {dur}s"
                 color = COLORS['success'] if elapsed >= dur else (COLORS['fg_text'] if is_static else COLORS['warning'])
-                self.lbl_monitor_status.config(text=txt, fg=color)
+                self.app.after(0, lambda t=txt, c=color: self.lbl_monitor_status.config(text=t, fg=c))
             if not is_static: static_start = time.time(); last_frame = curr
             time.sleep(0.1)
         self.static_monitor_active = False
@@ -1964,17 +1984,19 @@ class App(tk.Tk):
         
         self.update_title()
         self.after(100, self._poll_log)
+        # [新增] 启动 500 毫秒后显示欢迎引导
+        self.after(500, self.show_welcome_guide)
 
     def update_title(self):
         filename = os.path.basename(self.current_file_path) if self.current_file_path else "未命名"
-        self.title(f"Qflow 1.7.3 - QwejayHuang - {filename}")
+        self.title(f"Qflow 1.7.4 - QwejayHuang - {filename}")
 
     def _setup_ui(self):
         self.configure(bg=COLORS['bg_app'])
         for widget in self.winfo_children(): widget.destroy()
 
         title_bar = tk.Frame(self, bg=COLORS['bg_app'], height=50); title_bar.pack(fill='x', pady=5, padx=20)
-        tk.Label(title_bar, text="QFLOW 1.7.3", font=('Impact', 24), bg=COLORS['bg_app'], fg=COLORS['accent']).pack(side='left', padx=(0, 20))
+        tk.Label(title_bar, text="QFLOW 1.7.4", font=('Impact', 24), bg=COLORS['bg_app'], fg=COLORS['accent']).pack(side='left', padx=(0, 20))
         
         ops = tk.Frame(title_bar, bg=COLORS['bg_app']); ops.pack(side='left')
         for txt, cmd in [("📂 打开", self.load), ("💾 保存", self.save), ("📝 另存", self.save_as), ("🗑️ 清空", self.clear), ("⚙️ 设置", self.open_settings)]:
@@ -1997,7 +2019,7 @@ class App(tk.Tk):
         self.property_panel = PropertyPanel(h_paned, self); h_paned.add(self.property_panel, minsize=280, width=180)
         
         self.log_panel = LogPanel(self.main_paned)
-        self.main_paned.add(self.log_panel, minsize=80, height=200)
+        self.main_paned.add(self.log_panel, minsize=80, height=130) # 状态栏默认高度
         
         self.editor.add_node('start', 100, 100, save_history=False)
 
@@ -2097,6 +2119,7 @@ class App(tk.Tk):
                     n.draw()
                 else: 
                     n.update_data('image', img); n.update_data('tk_image', ImageUtils.make_thumb(img)); n.update_data('b64', ImageUtils.img_to_b64(img))
+                n.draw() 
                 self.property_panel.load_node(n)
             self.log(f"🖼️ 截取成功 ({x1},{y1})", "success")
             
@@ -2220,5 +2243,14 @@ class App(tk.Tk):
         self.editor.load_data({'nodes':{},'links':[]})
         self.current_file_path = None
         self.update_title()
+
+    def show_welcome_guide(self):
+        self.log("✨ 欢迎使用 Qflow-AI办公自动化软件！", "success")
+        self.log("*.  快速上手指引：", "info")
+        self.log("1. 【添加节点】从左侧工具栏直接 [拖动] 节点图标到中间画布。", "info")
+        self.log("2. 【建立连线】点击节点右侧的 [○ 端口] 并拖动到另一个节点上。", "info")
+        self.log("3. 【配置属性】单击选中画布上的节点，在右侧面板设置具体参数。", "info")
+        self.log("4. 【右键菜单】右键点击 [节点] 可复制或删除；右键点击 [端口] 可清除连线。", "warning")
+        self.log("5. 【运行控制】点击上方 [▶ 启动] 或使用快捷键 F9 (启动) / F10 (停止)。", "success")
 
 if __name__ == "__main__": App().mainloop()
