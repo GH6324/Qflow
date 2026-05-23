@@ -28,14 +28,14 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 3. 安装依赖
+      # 3. 安装依赖（已加入 zstandard 用于单文件高压缩比）
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install nuitka ordered-set zstandard
 
-      # 4. 获取最新 Release 版本号（如果没有则从 1.7.0 开始）
+      # 4. 获取最新 Release 版本号
       - name: Get latest release version
         id: get_version
         uses: actions/github-script@v7
@@ -44,33 +44,75 @@ jobs:
             const response = await github.rest.repos.listReleases({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              per_page: 1, // 只获取最新的 Release
+              per_page: 1,
             });
             let version;
             if (response.data.length === 0) {
-              version = '1.7.0'; // 如果没有 Release，从 1.7.0 开始
+              version = '1.7.0';
             } else {
               const latestTag = response.data[0].tag_name;
               const versionMatch = latestTag.match(/^v?(\d+)\.(\d+)\.(\d+)$/);
               if (!versionMatch) {
-                version = '1.7.0'; // 如果 tag_name 不符合规范，从 1.7.0 开始
+                version = '1.7.0';
               } else {
-                // 递增版本号（默认递增补丁版本）
                 const major = parseInt(versionMatch[1], 10);
                 const minor = parseInt(versionMatch[2], 10);
                 const patch = parseInt(versionMatch[3], 10) + 1;
                 version = `${major}.${minor}.${patch}`;
               }
             }
-            // 使用环境文件设置输出
             const fs = require('fs');
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
 
-      # 5. 使用 PyInstaller 打包应用
-      - name: Build with PyInstaller
+      # 5. 使用深度优化的 Nuitka 进行打包
+      - name: Build with Nuitka
         run: |
           $version = "${{ steps.get_version.outputs.version }}"
-          pyinstaller --onefile --windowed --name "Qflow_$version" --icon=icon.ico --add-data "icon.ico;." main.py
+          
+          # Nuitka 深度优化参数配置
+          $nuitkaParams = @(
+            "-m", "nuitka",
+            "--standalone",
+            "--onefile",
+            "--windows-console-mode=disable",
+            "--product-name=Qflow",
+            "--product-version=$version",
+            "--file-description=Qflow Application",
+            "--output-dir=dist",
+            "--clean-cache=all",
+            "--remove-output",                       # 编译成功后自动删除中间生成的临时 C 源码目录，节省磁盘
+            "--noinclude-unittest-mode=true",         # 排除内置的 unittest 测试包
+            "--noinclude-pytest-mode=true",           # 排除 pytest 相关的冗余依赖
+            "--noinclude-setuptools-mode=true",       # 排除构建工具 setuptools 运行时
+            "--assume-yes-for-downloads"
+          )
+          
+          # 自动检测并启用 GUI 库对应的 Nuitka 编译插件
+          $pipList = pip list
+          if ($pipList -match "PyQt5") { $nuitkaParams += "--enable-plugin=pyqt5" }
+          if ($pipList -match "PyQt6") { $nuitkaParams += "--enable-plugin=pyqt6" }
+          if ($pipList -match "PySide6") { $nuitkaParams += "--enable-plugin=pyside6" }
+          
+          # 检查并配置图标和数据资源文件
+          if (Test-Path "icon.ico") {
+            $nuitkaParams += "--windows-icon-from-ico=icon.ico"
+            $nuitkaParams += "--include-data-files=icon.ico=."
+          }
+          
+          # 主入口文件
+          $nuitkaParams += "main.py"
+          
+          # 启动 Nuitka 编译
+          python @nuitkaParams
+          
+          # 重命名生成的可执行文件
+          if (Test-Path "dist/main.exe") {
+            Rename-Item -Path "dist/main.exe" -NewName "Qflow_$version.exe"
+            Write-Host "成功生成优化后的二进制文件: dist/Qflow_$version.exe"
+          } else {
+            Write-Error "编译失败：未能在 dist/ 目录下找到编译出的可执行文件 main.exe"
+            exit 1
+          }
         shell: pwsh
 
       # 6. 上传构建产物作为 Artifact
@@ -85,10 +127,7 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          # Get only the latest commit message
           $latestCommit = git log -1 --pretty=format:"- %s (%h)"
-          
-          # Set the latest commit as changelog output
           "changelog<<EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           $latestCommit | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -105,6 +144,9 @@ jobs:
             ## Latest Change
             
             ${{ steps.changelog.outputs.changelog }}
+            
+            ---
+            *此版本由 GitHub Actions 自动构建生成。*
           draft: false
           prerelease: false
           files: |
