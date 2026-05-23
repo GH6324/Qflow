@@ -4,10 +4,18 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'      # 兼容带 v 的 Tag (如 v1.7.0)
+      - '[0-9]*'  # 兼容纯数字的 Tag (如 1.7.0)
   pull_request:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      version:
+        description: '手动构建版本号 (例如: 1.7.0)'
+        required: true
+        default: '1.7.0'
 
 jobs:
   build-and-release:
@@ -28,46 +36,46 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 3. 安装依赖（已加入 zstandard 用于单文件高压缩比）
+      # 3. 安装依赖（包含 zstandard 高效压缩）
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard
 
-      # 4. 获取最新 Release 版本号
-      - name: Get latest release version
-        id: get_version
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const response = await github.rest.repos.listReleases({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              per_page: 1,
-            });
-            let version;
-            if (response.data.length === 0) {
-              version = '1.7.0';
-            } else {
-              const latestTag = response.data[0].tag_name;
-              const versionMatch = latestTag.match(/^v?(\d+)\.(\d+)\.(\d+)$/);
-              if (!versionMatch) {
-                version = '1.7.0';
-              } else {
-                const major = parseInt(versionMatch[1], 10);
-                const minor = parseInt(versionMatch[2], 10);
-                const patch = parseInt(versionMatch[3], 10) + 1;
-                version = `${major}.${minor}.${patch}`;
-              }
-            }
-            const fs = require('fs');
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+      # 4. 解析版本号（强制滤除任何首字母 'v' 或 'V'）
+      - name: Resolve Version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # 1. 如果是 Tag 触发，直接使用 Tag 名
+            ORIGINAL_VER="${{ github.ref_name }}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # 2. 如果是手动触发，使用输入的版本号
+            ORIGINAL_VER="${{ github.event.inputs.version }}"
+          else
+            # 3. 普通 push/PR 触发测试，设为临时开发版本
+            ORIGINAL_VER="1.7.0-dev"
+          fi
+          
+          # 强制去除开头的 'v' 或 'V' 字符 (不论是 v1.7.0 还是 1.7.0，均统一净化为 1.7.0)
+          CLEAN_VER=$(echo "$ORIGINAL_VER" | sed -E 's/^[vV]//g')
+          
+          # 用于 Windows 的 Nuitka 属性要求，必须为纯数字 X.Y.Z 格式（去除 -dev 等后缀）
+          METADATA_VER=$(echo "$CLEAN_VER" | cut -d'-' -f1)
+          if [[ ! "$METADATA_VER" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            METADATA_VER="1.7.0"
+          fi
+          
+          echo "clean_version=$CLEAN_VER" >> $GITHUB_OUTPUT
+          echo "metadata_version=$METADATA_VER" >> $GITHUB_OUTPUT
 
-      # 5. 使用深度优化的 Nuitka 进行打包
+      # 5. 使用 Nuitka 进行打包
       - name: Build with Nuitka
         run: |
-          $version = "${{ steps.get_version.outputs.version }}"
+          $version = "${{ steps.version.outputs.clean_version }}"
+          $metadataVersion = "${{ steps.version.outputs.metadata_version }}"
           
           # Nuitka 深度优化参数配置
           $nuitkaParams = @(
@@ -76,14 +84,14 @@ jobs:
             "--onefile",
             "--windows-console-mode=disable",
             "--product-name=Qflow",
-            "--product-version=$version",
+            "--product-version=$metadataVersion",
             "--file-description=Qflow Application",
             "--output-dir=dist",
             "--clean-cache=all",
-            "--remove-output",                       # 编译成功后自动删除中间生成的临时 C 源码目录，节省磁盘
-            "--noinclude-unittest-mode=true",         # 排除内置的 unittest 测试包
-            "--noinclude-pytest-mode=true",           # 排除 pytest 相关的冗余依赖
-            "--noinclude-setuptools-mode=true",       # 排除构建工具 setuptools 运行时
+            "--remove-output",
+            "--noinclude-unittest-mode=true",
+            "--noinclude-pytest-mode=true",
+            "--noinclude-setuptools-mode=true",
             "--assume-yes-for-downloads"
           )
           
@@ -102,15 +110,15 @@ jobs:
           # 主入口文件
           $nuitkaParams += "main.py"
           
-          # 启动 Nuitka 编译
+          # 运行编译
           python @nuitkaParams
           
-          # 重命名生成的可执行文件
+          # 将编译生成的文件重命名为 Qflow_[版本号].exe (不带任何 V 前缀)
           if (Test-Path "dist/main.exe") {
             Rename-Item -Path "dist/main.exe" -NewName "Qflow_$version.exe"
-            Write-Host "成功生成优化后的二进制文件: dist/Qflow_$version.exe"
+            Write-Host "成功生成：dist/Qflow_$version.exe"
           } else {
-            Write-Error "编译失败：未能在 dist/ 目录下找到编译出的可执行文件 main.exe"
+            Write-Error "编译失败：未能在 dist 目录下找到生成的 main.exe 文件"
             exit 1
           }
         shell: pwsh
@@ -133,13 +141,13 @@ jobs:
           "EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         shell: pwsh
 
-      # 8. 创建 Release 并上传构建产物
+      # 8. 仅在推送 Tag 时触发 Release 创建并上传构建产物
       - name: Create Release and Upload Asset
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.get_version.outputs.version }}
-          name: Qflow v${{ steps.get_version.outputs.version }}
+          tag_name: ${{ github.ref_name }} # 仍关联您实际推送的 Tag (如 v1.7.0 或 1.7.0)
+          name: Qflow ${{ steps.version.outputs.clean_version }} # Release 标题净化显示为 Qflow 1.7.0
           body: |
             ## Latest Change
             
