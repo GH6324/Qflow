@@ -57,10 +57,45 @@ jobs:
           echo "clean_version=$CLEAN_VER" >> $GITHUB_OUTPUT
           echo "metadata_version=$METADATA_VER" >> $GITHUB_OUTPUT
 
+      - name: Sync Version to Code
+        shell: python
+        run: |
+          import re
+          import os
+
+          version = "${{ steps.version.outputs.clean_version }}"
+          print(f"Target version to sync: {version}")
+
+          # 自动检测 Qflow.py 或 main.py 并在代码中更新 __version__ 变量
+          for filename in ["Qflow.py", "main.py"]:
+              if os.path.exists(filename):
+                  with open(filename, 'r', encoding='utf-8') as f:
+                      content = f.read()
+                  
+                  if "__version__" in content:
+                      new_content = re.sub(
+                          r'(__version__\s*=\s*["\'])[^"\']+(["\'])',
+                          f'\\g<1>{version}\\g<2>',
+                          content,
+                          count=1
+                      )
+                      with open(filename, 'w', encoding='utf-8') as f:
+                          f.write(new_content)
+                      print(f"Successfully synchronized version in {filename}.")
+
       - name: Build with Nuitka
         run: |
           $version = "${{ steps.version.outputs.clean_version }}"
           $metadataVersion = "${{ steps.version.outputs.metadata_version }}"
+          
+          # 根据当前文件结构自适应选择入口点和期望的输出文件
+          if (Test-Path "Qflow.py") {
+              $entryPoint = "Qflow.py"
+              $expectedExe = "dist/Qflow.exe"
+          } else {
+              $entryPoint = "main.py"
+              $expectedExe = "dist/main.exe"
+          }
           
           $nuitkaParams = @(
             "-m", "nuitka",
@@ -90,15 +125,20 @@ jobs:
             $nuitkaParams += "--include-data-files=icon.ico=icon.ico"
           }
           
-          $nuitkaParams += "main.py"
+          $nuitkaParams += $entryPoint
           
           python @nuitkaParams
           
-          if (Test-Path "dist/main.exe") {
-            Rename-Item -Path "dist/main.exe" -NewName "Qflow_$version.exe"
+          if (Test-Path $expectedExe) {
+            # 重命名为带版本号的 exe 文件
+            Rename-Item -Path $expectedExe -NewName "Qflow_$version.exe"
             Write-Host "成功生成：dist/Qflow_$version.exe"
+            
+            # 将生成的 exe 压缩为 zip
+            Compress-Archive -Path "dist/Qflow_$version.exe" -DestinationPath "dist/Qflow_$version.zip"
+            Write-Host "成功生成：dist/Qflow_$version.zip"
           } else {
-            Write-Error "编译失败：未能在 dist 目录下找到生成的 main.exe 文件"
+            Write-Error "编译失败：未能在 dist 目录下找到生成的 $expectedExe 文件"
             exit 1
           }
         shell: pwsh
@@ -107,7 +147,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Qflow-executable
-          path: dist/Qflow_*.exe
+          path: dist/Qflow_*.zip
           retention-days: 5
 
       - name: Generate changelog
@@ -135,6 +175,6 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            dist/Qflow_*.exe
+            dist/Qflow_*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
