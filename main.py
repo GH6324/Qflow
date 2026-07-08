@@ -1171,11 +1171,8 @@ class GraphNode:
             toolbar_y = vy + (self.widget_offset_y * z)
             tool_frame = tk.Frame(self.canvas, bg=COLORS['bg_node'])
             def cmd_snip(nid=self.id): self.canvas.select_node(nid); self.canvas.app.do_snip()
-            def cmd_test(nid=self.id): self.canvas.select_node(nid); self.canvas.app.property_panel.start_test_match()
             btn_snip = tk.Button(tool_frame, text="🎯 抓取目标", command=cmd_snip, bg=COLORS['accent'], fg='#ffffff', bd=0, font=('Microsoft YaHei', int(10*z), 'bold'), activebackground='#42a5f5', cursor='hand2')
-            btn_snip.pack(side='left', fill='x', expand=True, padx=(0, 2), pady=0)
-            btn_test = tk.Button(tool_frame, text="⚡", command=cmd_test, bg='#505050', fg='#eeeeee', bd=0, width=3, activebackground='#606060')
-            btn_test.pack(side='right', fill='y', pady=0)
+            btn_snip.pack(side='left', fill='x', expand=True, padx=0, pady=0)
             self.widgets.append(self.canvas.create_window(vx + vw/2, toolbar_y, window=tool_frame, width=vw-10*z, height=26*z, anchor='n', tags=self.tags))
             
             img_start_y = toolbar_y + 32*z 
@@ -1439,7 +1436,7 @@ class FlowEditor(tk.Canvas):
         lx, ly = self.get_logical_pos(event.x, event.y); node = next((n for n in reversed(list(self.nodes.values())) if n.contains(lx, ly)), None)
         m=tk.Menu(self,tearoff=0,bg=COLORS['bg_card'],fg=COLORS['fg_text'],font=('Microsoft YaHei', int(9 * SCALE_FACTOR)))
         if node:
-            m.add_command(label="📥 复制",command=lambda: (self.history.save_state(), self.add_node(node.type, node.x+20, node.y+20, data=copy.deepcopy(node.data), save_history=False)))
+            m.add_command(label="📥 复制",command=lambda: (self.history.save_state(), self.add_node(node.type, node.x+20, node.y+20, data=self._clone_node_data(node.data), save_history=False)))
             m.add_command(label="🔴 断点",command=lambda: setattr(node, 'has_breakpoint', not node.has_breakpoint) or node.draw())
             m.add_separator()
             m.add_command(label="❌ 删除",command=lambda: (self.history.save_state(), self.delete_node(node.id)),foreground=COLORS['danger'])
@@ -1455,6 +1452,39 @@ class FlowEditor(tk.Canvas):
             target = min(n.x for n in nodes)
             for n in nodes: n.set_pos(target, n.y)
         self.redraw_links()
+
+    def _clone_node_data(self, data):
+        new_data = {}
+        for k, v in data.items():
+            if k in ['tk_image', '_tk_cache', 'node_number']: continue
+            if isinstance(v, Image.Image):
+                new_data[k] = v.copy()
+            elif isinstance(v, list):
+                new_list = []
+                for item in v:
+                    if isinstance(item, dict):
+                        new_item = {}
+                        for ik, iv in item.items():
+                            if ik in ['tk_image', '_tk_cache']: continue
+                            if isinstance(iv, Image.Image): 
+                                new_item[ik] = iv.copy()
+                                new_item['tk_image'] = ImageUtils.make_thumb(iv.copy())
+                            else: 
+                                try: new_item[ik] = copy.deepcopy(iv)
+                                except: pass
+                        new_list.append(new_item)
+                    else:
+                        try: new_list.append(copy.deepcopy(item))
+                        except: pass
+                new_data[k] = new_list
+            else:
+                try: new_data[k] = copy.deepcopy(v)
+                except: pass
+                
+        if 'image' in new_data:
+            new_data['tk_image'] = ImageUtils.make_thumb(new_data['image'])
+            
+        return new_data
 
     def sanitize_data_for_json(self, data):
         if isinstance(data, dict):
@@ -1581,9 +1611,9 @@ class PropertyPanel(tk.Frame):
              if not data.get('infinite', True): self._input(self.content, "循环次数", 'count', data.get('count', 5), safe_int)
         elif ntype == 'notify':
              self._input(self.content, "提示内容", 'msg', data.get('msg', '当前所有变量: {ALL_VARS}'))
-             self._input(self.content, "持续时间(秒)", 'duration', data.get('duration', 2.0), safe_float)
-             self._chk(self.content, "提示音", 'use_sound', data.get('use_sound', False))
-        elif ntype == 'set_var':
+             self._input(self.content, "持续时间(秒)", 'duration',, "提示音", 'use_sound', data.get('use_sound', False))
+        elif n data.get('duration', 2.0), safe_float)
+             self._chk(self.contenttype == 'set_var':
             sec = self._create_section("变量设置"); tk.Label(sec, text="每行 'name=value':", bg=sec.cget('bg'), fg=COLORS['fg_text'], font=('Microsoft YaHei', int(9 * SCALE_FACTOR))).pack(anchor='w')
             txt = tk.Text(sec, height=5, bg=COLORS['input_bg'], fg='white', bd=0, font=('Microsoft YaHei', int(10 * SCALE_FACTOR))); txt.pack(fill='x', pady=(2,5))
             existing = "".join([f"{i.get('name')}={i.get('value')}\n" for i in data.get('batch_vars', [])])
@@ -1707,7 +1737,6 @@ class PropertyPanel(tk.Frame):
             self._compact_input(off, "偏X", 'offset_x', data.get('offset_x', 0), safe_int)
             self._compact_input(off, "Y", 'offset_y', data.get('offset_y', 0), safe_int)
             self._btn_icon(off, "🎯", self.open_visual_offset_picker, bg=COLORS['control'], width=3)
-            self._btn(act, "⚡ 测试当前匹配", self.start_test_match)
 
         elif ntype == 'if_img':
             sec = self._create_section("多图检测配置")
@@ -1723,7 +1752,6 @@ class PropertyPanel(tk.Frame):
                 self._btn(sec, "🗑️ 清空所有图片", clear_imgs, bg=COLORS['danger'])
             param = self._create_section("匹配参数")
             self._input(param, "相似度(0.1-1.0)", 'confidence', data.get('confidence', 0.9), safe_float)
-            self._btn(param, "⚡ 测试当前屏幕匹配", self.start_test_match)
 
         elif ntype == 'if_static':
              base_sec = self._create_section("监控区域")
@@ -1913,29 +1941,6 @@ class PropertyPanel(tk.Frame):
             top.img_ref = tk_img; self.wait_window(top)
         except Exception as e: self.app.deiconify(); traceback.print_exc()
 
-    def start_test_match(self): threading.Thread(target=self._test_match_worker, daemon=True).start()
-    def _test_match_worker(self):
-        self.app.after(0, self.app.iconify)
-        time.sleep(0.5) 
-        res_txt = "未找到"
-        try:
-            if self.current_node.type == 'if_img':
-                imgs = self.current_node.data.get('images', []); passed = True; screen = VisionEngine.capture_screen()
-                for img in imgs:
-                    if not VisionEngine._advanced_match(img.get('image'), screen, 0.8, None, True, True, 1.0, 'hybrid')[0]: passed = False; break
-                res_txt = "✅ 全部满足" if passed else "❌ 条件不满足"
-            else:
-                 strategy = self.current_node.data.get('match_strategy', 'hybrid')
-                 res = VisionEngine.locate(self.current_node.data.get('image'), confidence=0.8, strategy=strategy)
-                 res_txt = "✅ 找到" if res else "❌ 未找到"
-        except Exception as e:
-            print(f"Test match error: {e}")
-        
-        def show_result():
-            self.app.deiconify()
-            messagebox.showinfo("测试结果", res_txt)
-        self.app.after(0, show_result)
-
     def _toggle_static_monitor(self):
         if self.static_monitor_active:
             self.static_monitor_active = False
@@ -2030,9 +2035,9 @@ class ExportWizardDialog(tk.Toplevel):
         
         f_mode = tk.Frame(content, bg=COLORS['bg_panel'])
         f_mode.pack(fill='x', pady=(0, 5))
-        tk.Label(f_mode, text="运行模式：", bg=COLORS['bg_panel'], fg=COLORS['accent'], font=('Microsoft YaHei', 10, 'bold')).pack(anchor='w', pady=(0, 5))
+        tk.Label(f_mode, text="运行模式：", bg=COLORS['bg_panel'], fg pady=(0, 5))
         
-        rb1 = tk.Radiobutton(f_mode, text="👻 无痕静默运行 (推荐)", variable=self.var_mode, value="--hidden-run", bg=COLORS['bg_panel'], fg=COLORS['fg_text'], selectcolor=COLORS['bg_app'], activebackground=COLORS['bg_panel'], activeforeground='white', font=('Microsoft YaHei', 10), cursor="hand2")
+        rb1 = tk.Radiobutton(f_mode, text="👻 无痕静默运行 (推荐)", variable=self.var_mode, value="--hidden-run=COLORS['accent'], font=('Microsoft YaHei', 10, 'bold')).pack(anchor='w',", bg=COLORS['bg_panel'], fg=COLORS['fg_text'], selectcolor=COLORS['bg_app'], activebackground=COLORS['bg_panel'], activeforeground='white', font=('Microsoft YaHei', 10), cursor="hand2")
         rb1.pack(anchor='w')
         tk.Label(f_mode, text="双击后无窗口，将在右下角托盘驻留，适合给终端客户使用。", bg=COLORS['bg_panel'], fg=COLORS['fg_sub'], font=('Microsoft YaHei', 9)).pack(anchor='w', padx=25)
         
@@ -2130,7 +2135,6 @@ class ExportWizardDialog(tk.Toplevel):
         exe_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
         is_python = not getattr(sys, 'frozen', False)
         
-        # 提前在 f-string 外部处理带有反斜杠的字符串替换，避免 Python < 3.12 的语法限制
         escaped_exe_path = exe_path.replace('\\', '\\\\')
         escaped_script_path = sys.argv[0].replace('\\', '\\\\')
         is_python_str = str(is_python).lower()
