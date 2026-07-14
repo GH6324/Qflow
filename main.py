@@ -1611,9 +1611,9 @@ class PropertyPanel(tk.Frame):
              if not data.get('infinite', True): self._input(self.content, "循环次数", 'count', data.get('count', 5), safe_int)
         elif ntype == 'notify':
              self._input(self.content, "提示内容", 'msg', data.get('msg', '当前所有变量: {ALL_VARS}'))
-             self._input(self.content, "持续时间(秒)", 'duration',, "提示音", 'use_sound', data.get('use_sound', False))
-        elif n data.get('duration', 2.0), safe_float)
-             self._chk(self.contenttype == 'set_var':
+             self._input(self.content, "持续时间(秒)", 'duration', data.get('duration', 2.0), safe_float)
+             self._chk(self.content, "提示音", 'use_sound', data.get('use_sound', False))
+        elif ntype == 'set_var':
             sec = self._create_section("变量设置"); tk.Label(sec, text="每行 'name=value':", bg=sec.cget('bg'), fg=COLORS['fg_text'], font=('Microsoft YaHei', int(9 * SCALE_FACTOR))).pack(anchor='w')
             txt = tk.Text(sec, height=5, bg=COLORS['input_bg'], fg='white', bd=0, font=('Microsoft YaHei', int(10 * SCALE_FACTOR))); txt.pack(fill='x', pady=(2,5))
             existing = "".join([f"{i.get('name')}={i.get('value')}\n" for i in data.get('batch_vars', [])])
@@ -1988,7 +1988,6 @@ class PropertyPanel(tk.Frame):
 
     def _audio_monitor_thread(self):
         while self.is_monitoring_audio and self.winfo_exists():
-            print(self.winfo_exists())
             vol = AudioEngine.get_max_audio_peak()
             if vol > 0.001: self.app.log(f"📊 音量峰值: {vol:.4f}", "info")
             time.sleep(0.5)
@@ -2035,9 +2034,9 @@ class ExportWizardDialog(tk.Toplevel):
         
         f_mode = tk.Frame(content, bg=COLORS['bg_panel'])
         f_mode.pack(fill='x', pady=(0, 5))
-        tk.Label(f_mode, text="运行模式：", bg=COLORS['bg_panel'], fg pady=(0, 5))
+        tk.Label(f_mode, text="运行模式：", bg=COLORS['bg_panel'], fg=COLORS['accent'], font=('Microsoft YaHei', 10, 'bold')).pack(anchor='w', pady=(0, 5))
         
-        rb1 = tk.Radiobutton(f_mode, text="👻 无痕静默运行 (推荐)", variable=self.var_mode, value="--hidden-run=COLORS['accent'], font=('Microsoft YaHei', 10, 'bold')).pack(anchor='w',", bg=COLORS['bg_panel'], fg=COLORS['fg_text'], selectcolor=COLORS['bg_app'], activebackground=COLORS['bg_panel'], activeforeground='white', font=('Microsoft YaHei', 10), cursor="hand2")
+        rb1 = tk.Radiobutton(f_mode, text="👻 无痕静默运行 (推荐)", variable=self.var_mode, value="--hidden-run", bg=COLORS['bg_panel'], fg=COLORS['fg_text'], selectcolor=COLORS['bg_app'], activebackground=COLORS['bg_panel'], activeforeground='white', font=('Microsoft YaHei', 10), cursor="hand2")
         rb1.pack(anchor='w')
         tk.Label(f_mode, text="双击后无窗口，将在右下角托盘驻留，适合给终端客户使用。", bg=COLORS['bg_panel'], fg=COLORS['fg_sub'], font=('Microsoft YaHei', 9)).pack(anchor='w', padx=25)
         
@@ -2908,3 +2907,4 @@ if __name__ == "__main__":
 
     app = App(file_path=file_to_load, auto_run=auto_run, hidden_run=hidden_run)
     app.mainloop()
+
